@@ -1,0 +1,16 @@
+# Node / React Native
+node_modules/
+.expo/
+.expo-shared/
+
+# Laravel
+/vendor/
+.env
+/storage/logs/
+/storage/framework/cache/
+/storage/framework/sessions/
+/storage/framework/views/
+
+# General
+.DS_Store
+*.log
