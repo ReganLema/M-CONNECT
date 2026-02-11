@@ -100,7 +100,7 @@ const parseAndValidateResponse = (
     }
   }
 
-  // ✅ FIXED: Include avatar from response if available
+  //  FIXED: Include avatar from response if available
   return {
     status: data.status || 'success',
     message: data.message || `${context.charAt(0).toUpperCase() + context.slice(1)} successful`,
@@ -235,7 +235,7 @@ export const getCurrentUser = async (): Promise<User> => {
     if (response.data?.status === 'success' && response.data?.user) {
       const userData = response.data.user;
       
-      // ✅ FIXED: Ensure avatar is included
+      //  FIXED: Ensure avatar is included
       const user: User = {
         id: userData.id,
         name: userData.name,
@@ -355,4 +355,3 @@ export const changePassword = async (data: {
 };
 
 
-// Remove the getAuthToken function since it's not needed

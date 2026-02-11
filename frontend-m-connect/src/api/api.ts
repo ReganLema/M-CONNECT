@@ -29,7 +29,7 @@ const stripBOM = (data: any): any => {
   return data;
 };
 
-// ✅ REQUEST INTERCEPTOR
+//  REQUEST INTERCEPTOR
 API.interceptors.request.use(
   async (config) => {
     try {
@@ -45,7 +45,7 @@ API.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// ✅ RESPONSE INTERCEPTOR
+//  RESPONSE INTERCEPTOR
 API.interceptors.response.use(
   (response: AxiosResponse) => {
     // Strip BOM from response data
@@ -71,14 +71,14 @@ API.interceptors.response.use(
       url: originalRequest?.url,
     });
 
-    // 🔴 NETWORK ERROR
+    //  NETWORK ERROR
     if (!error.response) {
       return Promise.reject(
         new Error("Cannot connect to server. Check IP, Wi-Fi, and backend.")
       );
     }
 
-    // 🔴 TOKEN EXPIRED → TRY REFRESH
+    //  TOKEN EXPIRED → TRY REFRESH
     if (error.response.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
@@ -111,7 +111,7 @@ API.interceptors.response.use(
       }
     }
 
-    // ✅ BACKEND ERROR
+    //  BACKEND ERROR
     return Promise.reject(error);
   }
 );

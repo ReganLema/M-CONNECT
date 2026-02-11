@@ -75,7 +75,7 @@ export default function BannerCarousel() {
         }));
         
         setBanners(updatedBanners);
-        console.log('✅ Banners fetched successfully');
+        console.log(' Banners fetched successfully');
         
       } catch (error) {
         console.log('⚠️ Using default banners due to fetch error:', error);

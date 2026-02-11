@@ -9,7 +9,7 @@ export type UpdateProfilePayload = {
   location?: string;
 };
 
-// ✅ ADDED: Get user profile by ID
+//  ADDED: Get user profile by ID
 export const getUserProfile = async (userId: number): Promise<any> => {
   try {
     console.log(`Fetching user profile for ID: ${userId}`);
@@ -187,7 +187,7 @@ export const updateFarmerProfile = async (
   }
 };
 
-// ✅ ADDED: Utility function to ensure avatar URLs are full URLs
+//  ADDED: Utility function to ensure avatar URLs are full URLs
 export const ensureFullAvatarUrl = (avatarUrl?: string, baseUrl: string = 'http://192.168.0.200:8000'): string | undefined => {
   if (!avatarUrl) return undefined;
   
@@ -205,7 +205,7 @@ export const ensureFullAvatarUrl = (avatarUrl?: string, baseUrl: string = 'http:
   return `${baseUrl}/storage/${avatarUrl}`;
 };
 
-// ✅ ADDED: Add cache busting to avatar URL
+//  ADDED: Add cache busting to avatar URL
 export const addCacheBusting = (avatarUrl: string, source?: string): string => {
   const timestamp = Date.now();
   const separator = avatarUrl.includes('?') ? '&' : '?';
