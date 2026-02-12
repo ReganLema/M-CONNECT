@@ -1,0 +1,104 @@
+name: M-CONNECT CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  backend:
+    name: Laravel Backend CI
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: mconnect
+          MYSQL_USER: mconnect
+          MYSQL_PASSWORD: mconnect123
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+          extensions: mbstring, pdo, pdo_mysql
+          ini-values: post_max_size=256M, memory_limit=512M
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-suggest
+
+      - name: Run Laravel migrations
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: mconnect
+          DB_USERNAME: mconnect
+          DB_PASSWORD: mconnect123
+        run: php artisan migrate --force
+
+      - name: Run backend tests
+        run: php artisan test
+
+  frontend:
+    name: React Frontend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        working-directory: ./frontend-m-connect
+        run: npm install
+
+      - name: Build frontend
+        working-directory: ./frontend-m-connect
+        run: npm run build
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker images
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/mconnect-backend:latest ./m-connect-api
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/mconnect-frontend:latest ./frontend-m-connect
+          docker push ${{ secrets.DOCKER_USERNAME }}/mconnect-backend:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/mconnect-frontend:latest
