@@ -24,10 +24,10 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd "mysqladmin ping --silent"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 3
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
 
     steps:
       - name: Checkout repository
@@ -42,9 +42,19 @@ jobs:
           coverage: none
 
       - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-progress --no-suggest
+        working-directory: ./m-connect-api
+        run: composer install --prefer-dist --no-progress
+
+      - name: Copy .env
+        working-directory: ./m-connect-api
+        run: cp .env.example .env
+
+      - name: Generate app key
+        working-directory: ./m-connect-api
+        run: php artisan key:generate
 
       - name: Run Laravel migrations
+        working-directory: ./m-connect-api
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -55,6 +65,7 @@ jobs:
         run: php artisan migrate --force
 
       - name: Run backend tests
+        working-directory: ./m-connect-api
         run: php artisan test
 
   frontend:
