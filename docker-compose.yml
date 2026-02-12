@@ -1,0 +1,44 @@
+services:
+
+  # ==============================
+  # MySQL Database
+  # ==============================
+  mysql:
+    image: mysql:8.0
+    container_name: mconnect-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: mconnect
+      MYSQL_USER: mconnect
+      MYSQL_PASSWORD: mconnect123
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # ==============================
+  # Laravel Backend
+  # ==============================
+  backend:
+    build:
+      context: ./m-connect-api
+    container_name: mconnect-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql
+    volumes:
+      - ./m-connect-api:/var/www
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: mconnect
+      DB_USERNAME: mconnect
+      DB_PASSWORD: mconnect123
+    command: php artisan serve --host=0.0.0.0 --port=8000
+
+volumes:
+  mysql_data:
