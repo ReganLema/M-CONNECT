@@ -2,11 +2,23 @@
 
 return [
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
-    'allowed_methods' => explode(',', env('CORS_ALLOWED_METHODS', '*')),
-    'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', [])),
+    
+    'allowed_methods' => ['*'],
+    
+    'allowed_origins' => [
+        'http://localhost:8081',
+        'http://192.168.0.197:8081', 
+        'http://localhost:19006',
+        'exp://192.168.0.197:8081'
+    ],
+    
     'allowed_origins_patterns' => [],
-    'allowed_headers' => explode(',', env('CORS_ALLOWED_HEADERS', '*')),
-    'exposed_headers' => explode(',', env('CORS_EXPOSED_HEADERS', '')),
-    'max_age' => (int) env('CORS_MAX_AGE', 0),
-    'supports_credentials' => (bool) env('CORS_SUPPORTS_CREDENTIALS', false),
+    
+    'allowed_headers' => ['*'],
+    
+    'exposed_headers' => ['Authorization'],
+    
+    'max_age' => 0,
+    
+    'supports_credentials' => true,
 ];
