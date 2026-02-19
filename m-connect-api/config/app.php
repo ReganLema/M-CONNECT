@@ -123,4 +123,12 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+      
+
+
+    
+      // Tracing configuration
+
+      'tracing_enabled' => env('TRACING_ENABLED', false),
+      'otlp_endpoint' => env('OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),
 ];

@@ -12,6 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        
+         //  tracing middleware
+        $middleware->append(\App\Http\Middleware\TracingMiddleware::class);
+
         // Configure CORS
         $middleware->api(append: [
             \Illuminate\Http\Middleware\HandleCors::class,

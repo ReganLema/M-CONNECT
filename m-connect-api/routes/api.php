@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\FarmerOrderController;
 use App\Http\Controllers\Api\PushTokenController;
 use App\Http\Controllers\Api\FarmerController;
+use App\Http\Controllers\Api\CacheController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -264,4 +265,16 @@ Route::prefix('farmers')->group(function () {
     
     // Get all farmers
     Route::get('/', [FarmerController::class, 'getAllFarmers']);
+});
+
+
+
+
+
+// Cache management routes
+Route::middleware(['auth:api'])->prefix('cache')->group(function () {
+    Route::get('/stats', [CacheController::class, 'stats']);
+    Route::post('/clear', [CacheController::class, 'clear']);
+    Route::post('/clear-pattern', [CacheController::class, 'clearPattern']);
+    Route::post('/warmup', [CacheController::class, 'warmup']);
 });

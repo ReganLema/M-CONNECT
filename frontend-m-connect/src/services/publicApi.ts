@@ -6,7 +6,7 @@
 import axios from 'axios';
 
 // Use your actual IP - Make sure it matches your backend
-const API_URL = 'http://192.168.0.198:8000/api';
+const API_URL = 'http://192.168.0.199:8000/api';
 
 const publicApi = axios.create({
   baseURL: API_URL,

@@ -1,44 +1,197 @@
-services:
+version: '3.8'
 
-  # ==============================
+services:
+  # ============================================
   # MySQL Database
-  # ==============================
+  # ============================================
   mysql:
     image: mysql:8.0
-    container_name: mconnect-mysql
+    container_name: m-connect-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: mconnect
-      MYSQL_USER: mconnect
-      MYSQL_PASSWORD: mconnect123
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_DATABASE:-m_connect}
+      MYSQL_USER: ${DB_USERNAME:-m_connect}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-password}
     ports:
-      - "3307:3306"
+      - "${DB_PORT:-3306}:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
+    networks:
+      - m-connect-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  # ==============================
-  # Laravel Backend
-  # ==============================
+  # ============================================
+  # Redis Cache & Queue
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: m-connect-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - m-connect-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================
+  # Redis Commander (Web UI)
+  # ============================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: m-connect-redis-ui
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:${REDIS_PASSWORD:-}
+    ports:
+      - "8081:8081"
+    networks:
+      - m-connect-network
+    depends_on:
+      - redis
+
+  # ============================================
+  # Laravel Backend API
+  # ============================================
   backend:
     build:
       context: ./m-connect-api
-    container_name: mconnect-backend
+      dockerfile: Dockerfile
+    container_name: m-connect-backend
     restart: unless-stopped
+    working_dir: /var/www
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./m-connect-api:/var/www
+      - backend-storage:/var/www/storage
+      - backend-cache:/var/www/bootstrap/cache
+    environment:
+      # App
+      APP_NAME: "${APP_NAME:-M-Connect}"
+      APP_ENV: "${APP_ENV:-local}"
+      APP_DEBUG: "${APP_DEBUG:-true}"
+      APP_URL: "${APP_URL:-http://localhost:8000}"
+      
+      # Database
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: "${DB_DATABASE:-m_connect}"
+      DB_USERNAME: "${DB_USERNAME:-m_connect}"
+      DB_PASSWORD: "${DB_PASSWORD:-password}"
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      REDIS_PORT: 6379
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      
+      # JWT
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_TTL: "${JWT_TTL:-1440}"
+    networks:
+      - m-connect-network
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "
+        composer install --no-interaction --optimize-autoloader &&
+        php artisan config:cache &&
+        php artisan route:cache &&
+        php artisan serve --host=0.0.0.0 --port=8000
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/up"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Queue Worker (Optional - for background jobs)
+  # ============================================
+  queue-worker:
+    build:
+      context: ./m-connect-api
+      dockerfile: Dockerfile
+    container_name: m-connect-queue
+    restart: unless-stopped
+    working_dir: /var/www
     volumes:
       - ./m-connect-api:/var/www
     environment:
       DB_CONNECTION: mysql
       DB_HOST: mysql
-      DB_PORT: 3306
-      DB_DATABASE: mconnect
-      DB_USERNAME: mconnect
-      DB_PASSWORD: mconnect123
-    command: php artisan serve --host=0.0.0.0 --port=8000
+      DB_DATABASE: "${DB_DATABASE:-m_connect}"
+      DB_USERNAME: "${DB_USERNAME:-m_connect}"
+      DB_PASSWORD: "${DB_PASSWORD:-password}"
+      REDIS_HOST: redis
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      QUEUE_CONNECTION: redis
+    networks:
+      - m-connect-network
+    depends_on:
+      - mysql
+      - redis
+      - backend
+    command: php artisan queue:work --verbose --tries=3 --timeout=90
 
+  # ============================================
+  # Nginx (Optional - for production)
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: m-connect-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./m-connect-api:/var/www
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    networks:
+      - m-connect-network
+    depends_on:
+      - backend
+    profiles:
+      - production
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  m-connect-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================
+# Volumes
+# ============================================
 volumes:
-  mysql_data:
+  mysql-data:
+    driver: local
+  redis-data:
+    driver: local
+  backend-storage:
+    driver: local
+  backend-cache:
+    driver: local
