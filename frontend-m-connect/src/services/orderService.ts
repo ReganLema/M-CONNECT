@@ -12,7 +12,7 @@ export type OrderItem = {
 export type Order = {
   id: number;
   total_amount: number;
-  status: string; // ✅ Frontend uses "status"
+  status: string; 
   payment_status: string;
   items_count: number;
   items: OrderItem[];
@@ -35,11 +35,11 @@ export async function getOrders(): Promise<Order[]> {
   try {
     const res = await api.get("/orders");
     
-    // ✅ Map backend response to frontend Order type
+    //  Map backend response to frontend Order type
     const orders = (res.data.orders ?? []).map((order: any) => ({
       id: order.id,
       total_amount: order.total_amount,
-      status: order.status, // ✅ Backend already returns "status"
+      status: order.status, 
       payment_status: order.payment_status,
       items_count: order.items_count,
       items: order.items,

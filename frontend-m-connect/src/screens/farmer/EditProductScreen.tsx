@@ -42,6 +42,7 @@ export default function EditProductScreen() {
   const [deleting, setDeleting] = useState(false);
   const [image, setImage] = useState<string | null>(null);
   const [imageChanged, setImageChanged] = useState(false);
+  const [originalImage, setOriginalImage] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -95,7 +96,6 @@ export default function EditProductScreen() {
       console.log(`🔄 Fetching product with ID: ${productId}`);
       
       const response = await api.get(`/products/${productId}`);
-      console.log('📦 Raw Product API Response:', typeof response.data, response.data);
       
       // Safely parse the response data
       const parsedData = safeJsonParse(response.data);
@@ -104,8 +104,6 @@ export default function EditProductScreen() {
         console.log('⚠️ Failed to parse API response');
         throw new Error('Failed to parse product data');
       }
-      
-      console.log('📦 Parsed Product Response:', parsedData);
       
       if (parsedData.status === 'success') {
         const product = parsedData.data;
@@ -121,6 +119,7 @@ export default function EditProductScreen() {
         
         if (product.image) {
           setImage(product.image);
+          setOriginalImage(product.image);
         }
         
         console.log('✅ Product loaded successfully:', product.name);
@@ -175,7 +174,7 @@ export default function EditProductScreen() {
       if (!result.canceled) {
         setImage(result.assets[0].uri);
         setImageChanged(true);
-        console.log('📸 New image selected');
+        console.log('📸 New image selected:', result.assets[0].uri);
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -210,126 +209,155 @@ export default function EditProductScreen() {
     return true;
   };
 
-  // Update product
- // In EditProductScreen.tsx - FIXED handleUpdate function
-const handleUpdate = async () => {
-  if (!validate()) return;
+  // ✅ FIXED: Update product with proper image handling
+  const handleUpdate = async () => {
+    if (!validate()) return;
 
-  setUpdating(true);
+    setUpdating(true);
 
-  try {
-    console.log('🔄 UPDATE ATTEMPT for product:', productId);
-    
-    // Create FormData
-    const formData = new FormData();
-    
-    // Add all fields - use 'filled' check for Laravel 'sometimes' validation
-    if (form.name.trim()) formData.append('name', form.name.trim());
-    if (form.category) formData.append('category', form.category);
-    if (form.price) formData.append('price', form.price);
-    if (form.quantity.trim()) formData.append('quantity', form.quantity.trim());
-    if (form.location.trim()) formData.append('location', form.location.trim());
-    if (form.description.trim()) formData.append('description', form.description.trim());
-    
-    // CRITICAL: Add _method=PUT for Laravel to handle PUT via POST
-    formData.append('_method', 'PUT');
-    
-    // Handle image
-    if (imageChanged) {
-      if (image) {
-        const filename = image.split('/').pop() || 'product.jpg';
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
-        
-        formData.append('image', {
-          uri: image,
-          name: filename,
-          type: type,
-        } as any);
-        console.log('📸 Adding new image');
+    try {
+      console.log('🔄 UPDATE ATTEMPT for product:', productId);
+      
+      // Create FormData
+      const formData = new FormData();
+      
+      // Add all fields - use 'filled' check for Laravel 'sometimes' validation
+      if (form.name.trim()) formData.append('name', form.name.trim());
+      if (form.category) formData.append('category', form.category);
+      if (form.price) formData.append('price', form.price);
+      if (form.quantity.trim()) formData.append('quantity', form.quantity.trim());
+      if (form.location.trim()) formData.append('location', form.location.trim());
+      if (form.description.trim()) formData.append('description', form.description.trim());
+      
+      // CRITICAL: Add _method=PUT for Laravel to handle PUT via POST
+      formData.append('_method', 'PUT');
+      
+      // ✅ FIXED: Handle image properly
+      if (imageChanged) {
+        if (image) {
+          // Check if this is a new image (starts with file://) or existing URL
+          if (image.startsWith('file://')) {
+            // This is a new image from camera/gallery
+            const filename = image.split('/').pop() || 'product.jpg';
+            const match = /\.(\w+)$/.exec(filename);
+            const type = match ? `image/${match[1]}` : 'image/jpeg';
+            
+            // Append as file, not string
+            formData.append('image', {
+              uri: image,
+              name: filename,
+              type: type,
+            } as any);
+            console.log('📸 Adding NEW image file:', filename);
+          } else if (image.startsWith('http')) {
+            // This is an existing image URL from CDN - don't send it back
+            // Laravel already has this image, so we don't need to send anything
+            console.log('🖼️ Keeping existing image (not sending file)');
+            // Don't append image field at all
+          }
+        } else {
+          // User wants to remove image - send empty string
+          formData.append('image', '');
+          console.log('🗑️ Removing image (sending empty string)');
+        }
       } else {
-        // Send empty string to remove image
-        formData.append('image', '');
-        console.log('🗑️ Removing image (sending empty string)');
+        // Image not changed - don't send image field at all
+        // This tells Laravel to keep the existing image
+        console.log('🖼️ Image unchanged - not sending image field');
       }
-    }
 
-    console.log('📤 Sending update via POST with _method=PUT');
-    
-    // Use POST with _method=PUT (most reliable for Laravel with file uploads)
-    const response = await api.post(`/products/${productId}`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-        'Accept': 'application/json',
-      },
-    });
+      // Log FormData contents for debugging
+      console.log('📤 Sending update via POST with _method=PUT');
+      // @ts-ignore - for debugging FormData internals
+      if (formData._parts) {
+        // @ts-ignore
+        formData._parts.forEach(([key, value]) => {
+          if (key === 'image' && value?.uri) {
+            console.log(`  ${key}: [FILE] ${value.name}`);
+          } else if (key === 'image' && value === '') {
+            console.log(`  ${key}: [EMPTY STRING - REMOVE]`);
+          } else if (key === 'image') {
+            console.log(`  ${key}: [SKIPPED - KEEP EXISTING]`);
+          } else {
+            console.log(`  ${key}: ${value}`);
+          }
+        });
+      }
+      
+      // Use POST with _method=PUT (most reliable for Laravel with file uploads)
+      const response = await api.post(`/products/${productId}`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Accept': 'application/json',
+        },
+      });
 
-    console.log('✅ Update response status:', response.status);
-    
-    // Check Laravel logs for debugging
-    console.log('📋 Check Laravel logs at: tail -f storage/logs/laravel.log');
+      console.log('✅ Update response status:', response.status);
+      
+      // Parse response
+      const parsedResponse = safeJsonParse(response.data);
+      console.log('📦 Update response data:', parsedResponse);
 
-    // Parse response
-    const parsedResponse = safeJsonParse(response.data);
-    console.log('📦 Update response data:', parsedResponse);
-
-    if (parsedResponse?.status === 'success') {
-      // Verify the data actually changed
-      const updatedProduct = parsedResponse.data;
-      console.log('✅ Product updated:', {
-        name: updatedProduct.name,
-        price: updatedProduct.price,
-        image: updatedProduct.image ? 'has image' : 'no image'
+      if (parsedResponse?.status === 'success') {
+        // Verify the data actually changed
+        const updatedProduct = parsedResponse.data;
+        console.log('✅ Product updated:', {
+          name: updatedProduct.name,
+          price: updatedProduct.price,
+          image: updatedProduct.image ? 'has image' : 'no image'
+        });
+        
+        Alert.alert(
+          'Success ✅',
+          'Product updated successfully!',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Navigate back and refresh products
+                navigation.goBack();
+                setTimeout(() => {
+                  navigation.getParent()?.navigate('Products', { 
+                    refresh: true,
+                    timestamp: Date.now()
+                  });
+                }, 100);
+              }
+            }
+          ]
+        );
+      } else {
+        throw new Error(parsedResponse?.message || 'Update failed');
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Update error:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
       });
       
-      Alert.alert(
-        'Success ✅',
-        'Product updated successfully!',
-        [
-          {
-            text: 'OK',
-            
-           onPress: () => {
-  // Try going back first
-  navigation.goBack();
-  
-  // Then try to navigate to Products in parent navigator
-  setTimeout(() => {
-    navigation.getParent()?.navigate('Products', { 
-      refresh: true,
-      timestamp: Date.now()
-    });
-  }, 100);
-}
-          }
-        ]
-      );
-    } else {
-      throw new Error(parsedResponse?.message || 'Update failed');
-    }
-    
-  } catch (error: any) {
-    console.error('❌ Update error:', {
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data,
-    });
-    
-    let errorMessage = 'Failed to update product. Please try again.';
-    
-    if (error.response?.data) {
-      const parsedError = safeJsonParse(error.response.data);
-      if (parsedError?.message) {
-        errorMessage = parsedError.message;
+      let errorMessage = 'Failed to update product. Please try again.';
+      
+      if (error.response?.data) {
+        const parsedError = safeJsonParse(error.response.data);
+        if (parsedError?.message) {
+          errorMessage = parsedError.message;
+        } else if (parsedError?.errors) {
+          // Handle validation errors
+          const errors = parsedError.errors;
+          const firstError = Object.values(errors)[0] as string[];
+          errorMessage = firstError?.[0] || errorMessage;
+        }
       }
+      
+      Alert.alert('Error ❌', errorMessage);
+      
+    } finally {
+      setUpdating(false);
     }
-    
-    Alert.alert('Error ❌', errorMessage);
-    
-  } finally {
-    setUpdating(false);
-  }
-};
+  };
+
   // Delete product
   const handleDelete = () => {
     Alert.alert(
@@ -437,7 +465,7 @@ const handleUpdate = async () => {
             <View className="items-center p-4">
               <ImagePlus size={36} color="#10B981" />
               <Text className="text-emerald-600 font-semibold mt-2">
-                Change Product Image
+                Add Product Image
               </Text>
               <Text className="text-gray-400 text-sm mt-1">
                 Tap to select from gallery
@@ -481,7 +509,6 @@ const handleUpdate = async () => {
                 key={cat} 
                 label={cat} 
                 value={cat} 
-                style={{ fontSize: 16 }}
               />
             ))}
           </Picker>

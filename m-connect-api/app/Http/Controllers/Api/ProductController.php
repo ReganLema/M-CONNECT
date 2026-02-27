@@ -5,20 +5,75 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Services\TracingService;
+use App\Traits\CacheKeys;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+
 
 class ProductController extends Controller
 {
+    use CacheKeys;
+
+    /**
+     * Cache TTL in seconds (1 hour)
+     */
+    protected $cacheTtl = 3600;
+
+    /**
+     * Get storage disk (R2 or public)
+     */
+    private function getStorageDisk()
+    {
+        return Storage::disk(config('filesystems.default'));
+    }
+
+    /**
+     * Generate URL for file path
+     */
+    private function getFileUrl($path)
+    {
+        if (!$path) {
+            return null;
+        }
+
+        try {
+            $disk = config('filesystems.default');
+            
+            // For R2 disk
+            if ($disk === 'r2') {
+                $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
+                return $baseUrl . '/' . ltrim($path, '/');
+            }
+            
+            // For local public disk
+            if ($disk === 'public') {
+                return asset('storage/' . ltrim($path, '/'));
+            }
+            
+            // For S3 or other disks, try to use the URL from config
+            $diskConfig = config("filesystems.disks.{$disk}");
+            if (isset($diskConfig['url'])) {
+                $baseUrl = rtrim($diskConfig['url'], '/');
+                return $baseUrl . '/' . ltrim($path, '/');
+            }
+            
+            // Fallback
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Error generating file URL: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     /**
      * Display a listing of the products for the authenticated user.
      */
     public function index(Request $request)
     {
-        // Start tracing
         $spanId = TracingService::startSpan('Get Products List', [
             'user.id' => Auth::id(),
             'has_category_filter' => $request->has('category'),
@@ -26,41 +81,52 @@ class ProductController extends Controller
         ]);
 
         try {
-            // Instead of using scopeForCurrentUser, use where directly
-            $products = Product::where('user_id', Auth::id())
-                ->when($request->category, function ($query, $category) {
-                    return $query->where('category', $category);
-                })
-                ->when($request->search, function ($query, $search) {
-                    return $query->where(function($q) use ($search) {
-                        $q->where('name', 'like', "%{$search}%")
-                          ->orWhere('description', 'like', "%{$search}%");
-                    });
-                })
-                ->latest()
-                ->get()
-                ->map(function ($product) {
-                    return [
-                        'id' => $product->id,
-                        'name' => $product->name,
-                        'category' => $product->category,
-                        'price' => (float) $product->price,
-                        'formatted_price' => number_format($product->price) . ' TZS',
-                        'quantity' => $product->quantity,
-                        'location' => $product->location,
-                        'description' => $product->description,
-                        'image' => $product->image_url,
-                        'created_at' => $product->created_at->format('Y-m-d H:i:s'),
-                        'updated_at' => $product->updated_at->format('Y-m-d H:i:s'),
-                    ];
-                });
+            $userId = Auth::id();
+            $category = $request->category;
+            $search = $request->search;
+            
+            $cacheKey = $this->getUserProductsCacheKey($userId, $category, $search);
+            
+            $products = Cache::remember($cacheKey, $this->cacheTtl, function () use ($userId, $category, $search) {
+                return Product::where('user_id', $userId)
+                    ->when($category, function ($query, $category) {
+                        return $query->where('category', $category);
+                    })
+                    ->when($search, function ($query, $search) {
+                        return $query->where(function($q) use ($search) {
+                            $q->where('name', 'like', "%{$search}%")
+                              ->orWhere('description', 'like', "%{$search}%");
+                        });
+                    })
+                    ->latest()
+                    ->get()
+                    ->map(function ($product) {
+                        // Get image URL
+                        $imageUrl = $this->getFileUrl($product->image);
 
-            // End span with success metrics
+                        return [
+                            'id' => $product->id,
+                            'name' => $product->name,
+                            'category' => $product->category,
+                            'price' => (float) $product->price,
+                            'formatted_price' => number_format($product->price) . ' TZS',
+                            'quantity' => $product->quantity,
+                            'location' => $product->location,
+                            'description' => $product->description,
+                            'image' => $imageUrl,
+                            'created_at' => $product->created_at->format('Y-m-d H:i:s'),
+                            'updated_at' => $product->updated_at->format('Y-m-d H:i:s'),
+                        ];
+                    });
+            });
+
             TracingService::endSpan($spanId, [
-                'products.count' => $products->count(),
+                'products.count' => count($products),
                 'filter.category' => $request->category ?? 'all',
                 'filter.search' => $request->search ? 'yes' : 'no',
                 'response.status' => 'success',
+                'cache.hit' => Cache::has($cacheKey) ? 'yes' : 'no',
+                'cdn.enabled' => config('filesystems.default') === 'r2',
             ]);
 
             return response()->json([
@@ -68,7 +134,7 @@ class ProductController extends Controller
                 'message' => 'Products retrieved successfully',
                 'data' => [
                     'products' => $products,
-                    'total' => $products->count(),
+                    'total' => count($products),
                 ]
             ]);
             
@@ -92,13 +158,11 @@ class ProductController extends Controller
      */
     public function store(Request $request)
     {
-        // Start tracing
         $spanId = TracingService::startSpan('Create Product', [
             'user.id' => Auth::id(),
             'has_image' => $request->hasFile('image'),
         ]);
 
-        // Validate the request
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'category' => 'required|string|max:255',
@@ -110,11 +174,7 @@ class ProductController extends Controller
         ]);
 
         if ($validator->fails()) {
-            TracingService::endSpan($spanId, [
-                'validation.failed' => true,
-                'validation.errors' => count($validator->errors()),
-            ]);
-
+            TracingService::endSpan($spanId, ['validation.failed' => true]);
             return response()->json([
                 'status' => 'error',
                 'message' => 'Validation failed',
@@ -123,19 +183,14 @@ class ProductController extends Controller
         }
 
         try {
-            // Check if user is authenticated
             if (!Auth::check()) {
-                TracingService::endSpan($spanId, [
-                    'auth.failed' => true,
-                ]);
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthenticated'
-                ], 401);
+                TracingService::endSpan($spanId, ['auth.failed' => true]);
+                return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
             }
 
-            // Handle image upload
+            $userId = Auth::id();
+
+            // Upload to CDN (R2 or local)
             $imagePath = null;
             if ($request->hasFile('image')) {
                 TracingService::addEvent('Image Upload Started', [
@@ -143,11 +198,15 @@ class ProductController extends Controller
                 ]);
 
                 $image = $request->file('image');
-                $filename = 'product_' . time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
-                $imagePath = $image->storeAs('products', $filename, 'public');
+                $filename = 'products/' . uniqid() . '_' . time() . '.' . $image->getClientOriginalExtension();
+                
+                // Upload to storage (R2 or local)
+                $this->getStorageDisk()->put($filename, file_get_contents($image), 'public');
+                $imagePath = $filename;
 
                 TracingService::addEvent('Image Upload Completed', [
                     'file.path' => $imagePath,
+                    'storage' => config('filesystems.default'),
                 ]);
             }
 
@@ -160,10 +219,17 @@ class ProductController extends Controller
                 'location' => $request->location,
                 'description' => $request->description,
                 'image' => $imagePath,
-                'user_id' => Auth::id(),
+                'user_id' => $userId,
             ]);
 
-            // Prepare response data
+            // Clear related cache
+            $this->clearUserProductCache($userId);
+            $this->clearPublicProductsCache();
+            $this->clearCategoriesCache();
+
+            // Get image URL
+            $imageUrl = $this->getFileUrl($imagePath);
+
             $responseData = [
                 'id' => $product->id,
                 'name' => $product->name,
@@ -173,15 +239,14 @@ class ProductController extends Controller
                 'quantity' => $product->quantity,
                 'location' => $product->location,
                 'description' => $product->description,
-                'image' => $product->image_url,
+                'image' => $imageUrl,
                 'created_at' => $product->created_at->format('Y-m-d H:i:s'),
             ];
 
             TracingService::endSpan($spanId, [
                 'product.id' => $product->id,
-                'product.name' => $product->name,
-                'product.category' => $product->category,
                 'image.uploaded' => $imagePath !== null,
+                'cdn.used' => config('filesystems.default') === 'r2',
                 'response.status' => 'success',
             ]);
 
@@ -192,16 +257,13 @@ class ProductController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
-            // If there's an error, delete the uploaded image if it exists
-            if (isset($imagePath) && Storage::disk('public')->exists($imagePath)) {
-                Storage::disk('public')->delete($imagePath);
+            // Delete from CDN if upload failed
+            if (isset($imagePath) && $this->getStorageDisk()->exists($imagePath)) {
+                $this->getStorageDisk()->delete($imagePath);
             }
 
             TracingService::recordException($e);
-            TracingService::endSpan($spanId, [
-                'error' => true,
-                'error.message' => $e->getMessage(),
-            ]);
+            TracingService::endSpan($spanId, ['error' => true]);
 
             return response()->json([
                 'status' => 'error',
@@ -216,39 +278,25 @@ class ProductController extends Controller
      */
     public function show($id)
     {
-        // Start tracing
         $spanId = TracingService::startSpan('Get Product Detail', [
             'user.id' => Auth::id(),
             'product.id' => $id,
         ]);
 
         try {
-            // Use where directly instead of scope
-            $product = Product::where('user_id', Auth::id())->find($id);
+            $cacheKey = $this->getProductCacheKey($id);
+            
+            $productData = Cache::remember($cacheKey, $this->cacheTtl, function () use ($id) {
+                $product = Product::where('user_id', Auth::id())->find($id);
 
-            if (!$product) {
-                TracingService::endSpan($spanId, [
-                    'product.found' => false,
-                    'response.status' => 'not_found',
-                ]);
+                if (!$product) {
+                    return null;
+                }
 
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Product not found'
-                ], 404);
-            }
+                // Get image URL
+                $imageUrl = $this->getFileUrl($product->image);
 
-            TracingService::endSpan($spanId, [
-                'product.found' => true,
-                'product.name' => $product->name,
-                'product.category' => $product->category,
-                'response.status' => 'success',
-            ]);
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Product retrieved successfully',
-                'data' => [
+                return [
                     'id' => $product->id,
                     'name' => $product->name,
                     'category' => $product->category,
@@ -257,18 +305,32 @@ class ProductController extends Controller
                     'quantity' => $product->quantity,
                     'location' => $product->location,
                     'description' => $product->description,
-                    'image' => $product->image_url,
+                    'image' => $imageUrl,
                     'created_at' => $product->created_at->format('Y-m-d H:i:s'),
                     'updated_at' => $product->updated_at->format('Y-m-d H:i:s'),
-                ]
+                ];
+            });
+
+            if (!$productData) {
+                TracingService::endSpan($spanId, ['product.found' => false]);
+                return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
+            }
+
+            TracingService::endSpan($spanId, [
+                'product.found' => true,
+                'cache.hit' => Cache::has($cacheKey) ? 'yes' : 'no',
+                'cdn.enabled' => config('filesystems.default') === 'r2',
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Product retrieved successfully',
+                'data' => $productData
             ]);
 
         } catch (\Exception $e) {
             TracingService::recordException($e);
-            TracingService::endSpan($spanId, [
-                'error' => true,
-                'error.message' => $e->getMessage(),
-            ]);
+            TracingService::endSpan($spanId, ['error' => true]);
 
             return response()->json([
                 'status' => 'error',
@@ -283,7 +345,6 @@ class ProductController extends Controller
      */
     public function update(Request $request, $id)
     {
-        // Start tracing
         $spanId = TracingService::startSpan('Update Product', [
             'user.id' => Auth::id(),
             'product.id' => $id,
@@ -293,36 +354,18 @@ class ProductController extends Controller
         Log::info('🔧 UPDATE PRODUCT API CALLED', [
             'product_id' => $id,
             'user_id' => Auth::id(),
-            'method' => $request->method(),
             'has_file' => $request->hasFile('image'),
-            'all_input' => $request->all(),
         ]);
 
         try {
-            // Find product
-            $product = Product::where('user_id', Auth::id())->find($id);
+            $userId = Auth::id();
+            $product = Product::where('user_id', $userId)->find($id);
 
             if (!$product) {
-                Log::warning('Product not found', ['product_id' => $id, 'user_id' => Auth::id()]);
-                
-                TracingService::endSpan($spanId, [
-                    'product.found' => false,
-                    'response.status' => 'not_found',
-                ]);
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Product not found'
-                ], 404);
+                TracingService::endSpan($spanId, ['product.found' => false]);
+                return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
             }
 
-            Log::info('Found product', [
-                'current_name' => $product->name,
-                'current_price' => $product->price,
-                'current_image' => $product->image,
-            ]);
-
-            // Validate - Use 'sometimes' for updates
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|required|string|max:255',
                 'category' => 'sometimes|required|string|max:255',
@@ -334,59 +377,42 @@ class ProductController extends Controller
             ]);
 
             if ($validator->fails()) {
-                Log::warning('Validation failed', $validator->errors()->toArray());
-                
-                TracingService::endSpan($spanId, [
-                    'validation.failed' => true,
-                    'validation.errors' => count($validator->errors()),
-                ]);
-
+                TracingService::endSpan($spanId, ['validation.failed' => true]);
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Validation failed',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
-            // Handle image update
-            $imagePath = $product->image; // Keep existing image by default
+            $imagePath = $product->image;
 
+            // Handle new image upload to CDN
             if ($request->hasFile('image')) {
-                Log::info('New image uploaded');
-                TracingService::addEvent('New Image Upload', [
-                    'old_image' => $product->image ? 'yes' : 'no',
-                ]);
+                TracingService::addEvent('New Image Upload');
                 
-                // Delete old image if exists
-                if ($product->image && Storage::disk('public')->exists($product->image)) {
-                    Storage::disk('public')->delete($product->image);
-                    Log::info('Deleted old image', ['path' => $product->image]);
+                // Delete old image from CDN
+                if ($product->image && $this->getStorageDisk()->exists($product->image)) {
+                    $this->getStorageDisk()->delete($product->image);
                 }
 
-                // Upload new image
+                // Upload new image to CDN
                 $image = $request->file('image');
-                $filename = 'product_' . time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
-                $imagePath = $image->storeAs('products', $filename, 'public');
-                Log::info('Uploaded new image', ['path' => $imagePath]);
+                $filename = 'products/' . uniqid() . '_' . time() . '.' . $image->getClientOriginalExtension();
+                $this->getStorageDisk()->put($filename, file_get_contents($image), 'public');
+                $imagePath = $filename;
             } 
-            // Handle image removal (when empty string is sent)
             elseif ($request->input('image') === '' || $request->input('image') === null) {
-                Log::info('Image removal requested');
-                TracingService::addEvent('Image Removal', [
-                    'had_image' => $product->image ? 'yes' : 'no',
-                ]);
+                TracingService::addEvent('Image Removal');
                 
-                // Delete old image if exists
-                if ($product->image && Storage::disk('public')->exists($product->image)) {
-                    Storage::disk('public')->delete($product->image);
-                    Log::info('Deleted image for removal', ['path' => $product->image]);
+                // Delete image from CDN
+                if ($product->image && $this->getStorageDisk()->exists($product->image)) {
+                    $this->getStorageDisk()->delete($product->image);
                 }
-                
-                $imagePath = null; // Set image to null
+                $imagePath = null;
             }
 
-            // Prepare update data
-            $updateData = [
+            // Update product
+            $product->update([
                 'name' => $request->filled('name') ? $request->name : $product->name,
                 'category' => $request->filled('category') ? $request->category : $product->category,
                 'price' => $request->filled('price') ? $request->price : $product->price,
@@ -394,31 +420,20 @@ class ProductController extends Controller
                 'location' => $request->filled('location') ? $request->location : $product->location,
                 'description' => $request->filled('description') ? $request->description : $product->description,
                 'image' => $imagePath,
-            ];
-
-            Log::info('Updating with data:', $updateData);
-
-            // Update product
-            $product->update($updateData);
-
-            Log::info('Product updated successfully', [
-                'new_name' => $product->name,
-                'new_price' => $product->price,
-                'new_image' => $product->image,
             ]);
+
+            // Clear cache
+            $this->clearUserProductCache($userId);
+            $this->clearPublicProductsCache();
+            $this->clearProductCache($product->id);
+            $this->clearCategoriesCache();
+
+            // Get image URL
+            $imageUrl = $this->getFileUrl($imagePath);
 
             TracingService::endSpan($spanId, [
                 'product.updated' => true,
-                'fields_changed' => count(array_filter([
-                    $request->filled('name'),
-                    $request->filled('category'),
-                    $request->filled('price'),
-                    $request->filled('quantity'),
-                    $request->hasFile('image'),
-                ])),
-                'image.changed' => $request->hasFile('image'),
-                'image.removed' => $request->input('image') === '',
-                'response.status' => 'success',
+                'cdn.used' => config('filesystems.default') === 'r2',
             ]);
 
             return response()->json([
@@ -433,22 +448,14 @@ class ProductController extends Controller
                     'quantity' => $product->quantity,
                     'location' => $product->location,
                     'description' => $product->description,
-                    'image' => $product->image_url,
+                    'image' => $imageUrl,
                     'updated_at' => $product->updated_at->format('Y-m-d H:i:s'),
                 ]
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Update failed:', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
             TracingService::recordException($e);
-            TracingService::endSpan($spanId, [
-                'error' => true,
-                'error.message' => $e->getMessage(),
-            ]);
+            TracingService::endSpan($spanId, ['error' => true]);
 
             return response()->json([
                 'status' => 'error',
@@ -463,47 +470,42 @@ class ProductController extends Controller
      */
     public function destroy($id)
     {
-        // Start tracing
         $spanId = TracingService::startSpan('Delete Product', [
             'user.id' => Auth::id(),
             'product.id' => $id,
         ]);
 
         try {
-            // Use where directly
-            $product = Product::where('user_id', Auth::id())->find($id);
+            $userId = Auth::id();
+            $product = Product::where('user_id', $userId)->find($id);
 
             if (!$product) {
-                TracingService::endSpan($spanId, [
-                    'product.found' => false,
-                    'response.status' => 'not_found',
-                ]);
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Product not found'
-                ], 404);
+                TracingService::endSpan($spanId, ['product.found' => false]);
+                return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
             }
 
             $productName = $product->name;
-            $hadImage = $product->image !== null;
 
-            // Delete image if exists
-            if ($product->image && Storage::disk('public')->exists($product->image)) {
-                Storage::disk('public')->delete($product->image);
-                TracingService::addEvent('Image Deleted', [
+            // Delete from CDN
+            if ($product->image && $this->getStorageDisk()->exists($product->image)) {
+                $this->getStorageDisk()->delete($product->image);
+                TracingService::addEvent('Image Deleted from CDN', [
                     'image_path' => $product->image,
                 ]);
             }
 
-            // Delete product
             $product->delete();
+
+            // Clear cache
+            $this->clearUserProductCache($userId);
+            $this->clearPublicProductsCache();
+            $this->clearProductCache($id);
+            $this->clearCategoriesCache();
 
             TracingService::endSpan($spanId, [
                 'product.deleted' => true,
                 'product.name' => $productName,
-                'image.deleted' => $hadImage,
-                'response.status' => 'success',
+                'cdn.used' => config('filesystems.default') === 'r2',
             ]);
 
             return response()->json([
@@ -513,10 +515,7 @@ class ProductController extends Controller
 
         } catch (\Exception $e) {
             TracingService::recordException($e);
-            TracingService::endSpan($spanId, [
-                'error' => true,
-                'error.message' => $e->getMessage(),
-            ]);
+            TracingService::endSpan($spanId, ['error' => true]);
 
             return response()->json([
                 'status' => 'error',

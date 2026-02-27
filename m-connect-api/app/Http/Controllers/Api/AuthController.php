@@ -8,13 +8,43 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
 
-
 class AuthController extends Controller
 {
+    /**
+     * Get CDN URL for avatar
+     */
+    private function getAvatarUrl($avatar)
+    {
+        if (!$avatar) {
+            return null;
+        }
+
+        try {
+            $disk = config('filesystems.default');
+            
+            // For R2 disk
+            if ($disk === 'r2') {
+                $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
+                return $baseUrl . '/' . ltrim($avatar, '/');
+            }
+            
+            // For local public disk (fallback)
+            if ($disk === 'public') {
+                return asset('storage/' . ltrim($avatar, '/'));
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Error generating avatar URL: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     /**
      * Register a new user
      */
@@ -59,15 +89,15 @@ class AuthController extends Controller
             $refreshToken = Str::random(60);
             Log::info('Refresh token generated');
             
-            // Update user with refresh token - USING CORRECT COLUMN NAME
+            // Update user with refresh token
             $user->refresh_token = $refreshToken;
-            $user->refresh_token_expires_at = Carbon::now()->addDays(30);  // CORRECT: refresh_token_expires_at
+            $user->refresh_token_expires_at = Carbon::now()->addDays(30);
             $user->save();
             
             Log::info('User updated with refresh token');
 
-            // ✅ FIX: Get avatar URL (will be null for new users)
-            $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
+            //  Get CDN URL for avatar
+            $avatarUrl = $this->getAvatarUrl($user->avatar);
 
             return response()->json([
                 'status' => 'success',
@@ -77,7 +107,7 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->role,
-                    'avatar' => $avatarUrl, // ✅ ADDED: Avatar URL
+                    'avatar' => $avatarUrl, 
                 ],
                 'accessToken' => $accessToken,
                 'refreshToken' => $refreshToken,
@@ -136,13 +166,13 @@ class AuthController extends Controller
 
             $refreshToken = Str::random(60);
             
-            // Save refresh token to user - USING CORRECT COLUMN NAME
+            // Save refresh token to user
             $user->refresh_token = $refreshToken;
-            $user->refresh_token_expires_at = Carbon::now()->addDays(30);  // CORRECT
+            $user->refresh_token_expires_at = Carbon::now()->addDays(30);
             $user->save();
 
-            // ✅ FIX: Get avatar URL
-            $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
+            //  Get CDN URL for avatar
+            $avatarUrl = $this->getAvatarUrl($user->avatar);
 
             return response()->json([
                 'status' => 'success',
@@ -152,7 +182,9 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->role,
-                    'avatar' => $avatarUrl, // ✅ ADDED: Avatar URL
+                    'avatar' => $avatarUrl, 
+                    'phone' => $user->phone,
+                    'location' => $user->location,
                 ],
                 'accessToken' => $token,
                 'refreshToken' => $refreshToken,
@@ -189,9 +221,8 @@ class AuthController extends Controller
         $refreshToken = $request->refreshToken;
 
         try {
-            // USING CORRECT COLUMN NAME
             $user = User::where('refresh_token', $refreshToken)
-                ->where('refresh_token_expires_at', '>', Carbon::now())  // CORRECT
+                ->where('refresh_token_expires_at', '>', Carbon::now())
                 ->first();
 
             if (!$user) {
@@ -204,13 +235,13 @@ class AuthController extends Controller
             $newAccessToken = JWTAuth::fromUser($user);
             $newRefreshToken = Str::random(60);
             
-            // Update refresh token - USING CORRECT COLUMN NAME
+            // Update refresh token
             $user->refresh_token = $newRefreshToken;
-            $user->refresh_token_expires_at = Carbon::now()->addDays(30);  // CORRECT
+            $user->refresh_token_expires_at = Carbon::now()->addDays(30);
             $user->save();
 
-            // ✅ FIX: Get avatar URL
-            $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
+            //  Get CDN URL for avatar
+            $avatarUrl = $this->getAvatarUrl($user->avatar);
 
             return response()->json([
                 'status' => 'success',
@@ -220,7 +251,9 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->role,
-                    'avatar' => $avatarUrl, // ✅ ADDED: Avatar URL
+                    'avatar' => $avatarUrl, 
+                    'phone' => $user->phone,
+                    'location' => $user->location,
                 ],
                 'accessToken' => $newAccessToken,
                 'refreshToken' => $newRefreshToken,
@@ -245,8 +278,8 @@ class AuthController extends Controller
         try {
             $user = JWTAuth::parseToken()->authenticate();
             
-            //  Get avatar URL
-            $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
+            //  Get CDN URL for avatar
+            $avatarUrl = $this->getAvatarUrl($user->avatar);
             
             return response()->json([
                 'status' => 'success',
@@ -257,6 +290,9 @@ class AuthController extends Controller
                     'phone' => $user->phone,
                     'role' => $user->role,
                     'avatar' => $avatarUrl, 
+                    'location' => $user->location,
+                    'created_at' => $user->created_at,
+                    'updated_at' => $user->updated_at,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -275,9 +311,9 @@ class AuthController extends Controller
         try {
             $user = JWTAuth::parseToken()->authenticate();
             
-            // Clear refresh token - USING CORRECT COLUMN NAME
+            // Clear refresh token
             $user->refresh_token = null;
-            $user->refresh_token_expires_at = null;  // CORRECT
+            $user->refresh_token_expires_at = null;
             $user->save();
             
             JWTAuth::invalidate(JWTAuth::getToken());
@@ -302,8 +338,8 @@ class AuthController extends Controller
         try {
             $user = JWTAuth::parseToken()->authenticate();
             
-            // ✅ FIX: Get avatar URL
-            $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
+            //  Get CDN URL for avatar
+            $avatarUrl = $this->getAvatarUrl($user->avatar);
             
             return response()->json([
                 'status' => 'success',
@@ -313,7 +349,9 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->role,
-                    'avatar' => $avatarUrl, // ✅ ADDED: Avatar URL
+                    'avatar' => $avatarUrl, 
+                    'phone' => $user->phone,
+                    'location' => $user->location,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -324,44 +362,39 @@ class AuthController extends Controller
         }
     }
 
-
-   /**
+    /**
      * Change user password
      */
     public function changePassword(Request $request)
-{
-    // Validate request
-    $validator = Validator::make($request->all(), [
-        'oldPassword' => 'required|string',
-        'newPassword' => 'required|string|min:8|confirmed',
-    ]);
+    {
+        $validator = Validator::make($request->all(), [
+            'oldPassword' => 'required|string',
+            'newPassword' => 'required|string|min:8|confirmed',
+        ]);
 
-    if ($validator->fails()) {
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = $request->user();
+
+        if (!Hash::check($request->oldPassword, $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Current password is incorrect'
+            ], 401);
+        }
+
+        $user->password = Hash::make($request->newPassword);
+        $user->save();
+
         return response()->json([
-            'status' => 'error',
-            'message' => 'Validation failed',
-            'errors' => $validator->errors()
-        ], 422);
+            'status' => 'success',
+            'message' => 'Password updated successfully'
+        ], 200);
     }
-
-    // Get authenticated user
-    $user = $request->user();
-
-    // Check if old password matches
-    if (!Hash::check($request->oldPassword, $user->password)) {
-        return response()->json([
-            'status' => 'error',
-            'message' => 'Current password is incorrect'
-        ], 401);
-    }
-
-    // Update password
-    $user->password = Hash::make($request->newPassword);
-    $user->save();
-
-    return response()->json([
-        'status' => 'success',
-        'message' => 'Password updated successfully'
-    ], 200);
-}
 }

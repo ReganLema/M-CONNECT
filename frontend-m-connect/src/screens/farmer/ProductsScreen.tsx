@@ -13,6 +13,7 @@ import {
 import { Plus, Pencil, Trash2 } from "lucide-react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import api from "@/services/productsapi";
+import { getCdnUrl } from "@/utils/cdn"; 
 
 type Product = {
   id: number;
@@ -46,19 +47,15 @@ const FarmerProductsScreen: React.FC = () => {
   // Parse JSON response safely
   const safeJsonParse = (responseData: any) => {
     try {
-      // If responseData is already an object, return it
       if (typeof responseData === 'object' && responseData !== null) {
         return responseData;
       }
       
-      // If it's a string, try to parse it
       if (typeof responseData === 'string') {
-        // Remove BOM character if present
         const cleanString = removeBOM(responseData);
         return JSON.parse(cleanString);
       }
       
-      // If it's neither string nor object, return null
       return null;
     } catch (error) {
       console.error('Error parsing JSON:', error);
@@ -72,8 +69,6 @@ const FarmerProductsScreen: React.FC = () => {
       console.log('🔄 Fetching products...');
       
       const response = await api.get('/products');
-      
-      // Safely parse the response data
       const parsedData = safeJsonParse(response.data);
       
       if (!parsedData) {
@@ -84,9 +79,7 @@ const FarmerProductsScreen: React.FC = () => {
       
       let productsArray = [];
       
-      // Check the structure of the parsed data
       if (parsedData.status === 'success') {
-        // Check for products in different possible locations
         if (parsedData.data?.products && Array.isArray(parsedData.data.products)) {
           productsArray = parsedData.data.products;
         } else if (Array.isArray(parsedData.data)) {
@@ -95,26 +88,40 @@ const FarmerProductsScreen: React.FC = () => {
           productsArray = parsedData.products;
         }
       } else if (Array.isArray(parsedData)) {
-        // Direct array response
         productsArray = parsedData;
       }
       
       console.log(`✅ Found ${productsArray.length} products`);
       
-      // Transform to our format
-      const productsData = productsArray.map((product: any) => ({
-        id: product.id || 0,
-        name: product.name || 'Unnamed Product',
-        price: product.price || 0,
-        image: product.image || product.image_url || null,
-        category: product.category || 'Uncategorized',
-        quantity: product.quantity || '',
-        location: product.location || '',
-        description: product.description || '',
-        created_at: product.created_at || new Date().toISOString(),
-        formatted_price: product.formatted_price || 
-                        `Tsh ${(product.price || 0).toLocaleString()}`,
-      }));
+      // ✅ TRANSFORM WITH CDN URLS
+      const productsData = productsArray.map((product: any) => {
+        // IMPORTANT: Your Laravel returns both image and image_url
+        // Use image_url first (full CDN URL), fallback to image
+        const imageUrl = product.image_url || product.image;
+
+        // Debug log to see what you're getting
+         console.log('📸 Product image debug:', {
+           id: product.id,
+             name: product.name,
+            image_url: product.image_url,
+          image: product.image,
+         using: imageUrl
+  });
+        
+        return {
+          id: product.id || 0,
+          name: product.name || 'Unnamed Product',
+          price: product.price || 0,
+           image: getCdnUrl(imageUrl),
+          category: product.category || 'Uncategorized',
+          quantity: product.quantity || '',
+          location: product.location || '',
+          description: product.description || '',
+          created_at: product.created_at || new Date().toISOString(),
+          formatted_price: product.formatted_price || 
+                          `Tsh ${(product.price || 0).toLocaleString()}`,
+        };
+      });
       
       setProducts(productsData);
       
@@ -168,10 +175,7 @@ const FarmerProductsScreen: React.FC = () => {
       const response = await api.delete(`/products/${id}`);
       
       if (response.status === 200 || response.status === 204) {
-        // Remove product from local state
         setProducts(prev => prev.filter(p => p.id !== id));
-        
-        // Show success message
         Alert.alert('Success', 'Product deleted successfully');
       } else {
         throw new Error('Failed to delete product');
@@ -183,7 +187,6 @@ const FarmerProductsScreen: React.FC = () => {
       
       if (error.response?.status === 404) {
         errorMessage = 'Product not found. It may have been already deleted.';
-        // Refresh list
         fetchProducts();
       } else if (error.response?.data?.message) {
         errorMessage = error.response.data.message;
@@ -207,9 +210,10 @@ const FarmerProductsScreen: React.FC = () => {
       <View className="relative">
         {item.image ? (
           <Image 
-            source={{ uri: item.image }} 
+            source={{ uri: item.image }} // ✅ CDN URL works!
             className="h-48 w-full"
             resizeMode="cover"
+            onError={(e) => console.log('Image load error:', e.nativeEvent.error)}
           />
         ) : (
           <View className="h-48 w-full bg-gray-200 items-center justify-center">
@@ -361,7 +365,7 @@ const FarmerProductsScreen: React.FC = () => {
         />
       )}
 
-      {/* Floating Add Product Button - Always show */}
+      {/* Floating Add Product Button */}
       <TouchableOpacity
         onPress={() => navigation.navigate("AddProduct")}
         activeOpacity={0.85}

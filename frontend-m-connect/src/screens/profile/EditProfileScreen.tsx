@@ -1,4 +1,8 @@
+
+
+
 // EditProfileScreen.tsx
+
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -96,6 +100,7 @@ export default function EditProfileScreen() {
     }
   }, [name, email, phone, avatar, user]);
 
+
   /* =====================
      PHONE VALIDATION
   ===================== */
@@ -161,9 +166,8 @@ export default function EditProfileScreen() {
     }
   };
 
-  /* =====================
-     IMAGE PICKER
-  ===================== */
+
+  /*IMAGE PICKER */
   const pickImage = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -240,9 +244,9 @@ export default function EditProfileScreen() {
     }
   };
 
-  /* =====================
-     IMAGE UPLOAD HANDLER
-  ===================== */
+
+
+  /*IMAGE UPLOAD HANDLER */
   const handleImageSelected = async (imageUri: string) => {
     if (!authUser?.id) {
       Alert.alert('Error', 'User not found. Please login again.');
@@ -270,9 +274,11 @@ export default function EditProfileScreen() {
     }
   };
 
-  /* =====================
-     SAVE PROFILE
-  ===================== */
+
+
+
+  /*SAVE PROFILE */
+
   const handleSave = async () => {
     if (!authUser?.id) {
       Alert.alert('Error', 'User not found. Please login again.');
@@ -346,6 +352,7 @@ export default function EditProfileScreen() {
           avatar: updatedUser.avatar || avatar,
         });
       } else {
+
         // Fallback to local updates if server response is missing
         const cleanedPhone = phone.trim() ? phone : "";
         
@@ -386,9 +393,9 @@ export default function EditProfileScreen() {
     }
   };
 
-  /* =====================
-     CANCEL
-  ===================== */
+
+      /*CANCEL */
+
   const handleCancel = () => {
     if (hasChanges) {
       Alert.alert(
@@ -575,24 +582,6 @@ export default function EditProfileScreen() {
             Cancel
           </Text>
         </TouchableOpacity>
-
-        {/* Debug Info (Development only) */}
-        {__DEV__ && (
-          <View className="mt-8 p-4 bg-gray-100 rounded-xl">
-            <Text className="text-gray-700 font-semibold mb-2">Debug Info:</Text>
-            <Text className="text-gray-600 text-xs">User ID: {authUser?.id}</Text>
-            <Text className="text-gray-600 text-xs">Original Name: {user.name || "None"}</Text>
-            <Text className="text-gray-600 text-xs">New Name: {name}</Text>
-            <Text className="text-gray-600 text-xs">Original Phone: {user.phone || "None"}</Text>
-            <Text className="text-gray-600 text-xs">Original Phone (digits): {user.phone ? user.phone.replace(/\D/g, '') : "None"}</Text>
-            <Text className="text-gray-600 text-xs">New Phone (digits): {phone || "None"}</Text>
-            <Text className="text-gray-600 text-xs">Phone Error: {phoneError || "None"}</Text>
-            <Text className="text-gray-600 text-xs">Avatar URL: {avatar || "None"}</Text>
-            <Text className="text-gray-600 text-xs">Avatar Changed: {avatar !== user.avatar ? 'Yes' : 'No'}</Text>
-            <Text className="text-gray-600 text-xs">Has Changes: {hasChanges ? 'Yes' : 'No'}</Text>
-            <Text className="text-gray-600 text-xs">Initialized: {hasInitialized.current ? 'Yes' : 'No'}</Text>
-          </View>
-        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );

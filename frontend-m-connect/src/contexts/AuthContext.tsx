@@ -18,6 +18,36 @@ import {
   User as ApiUser,
 } from "@/api/auth";
 
+
+
+// Add this to your AuthContext.tsx, right after the imports
+
+const CDN_BASE_URL = 'https://pub-830fc031162b476396c6a260d2baec03.r2.dev';
+
+/* =====================
+   ENSURE FULL AVATAR URL
+===================== */
+const ensureFullAvatarUrl = (avatarUrl?: string): string | undefined => {
+  if (!avatarUrl) return undefined;
+  
+  // If it's already a full URL, return as is
+  if (avatarUrl.startsWith('http')) {
+    return avatarUrl;
+  }
+  
+  // If it's a local storage path, convert to CDN
+  if (avatarUrl.includes('/storage/')) {
+    const path = avatarUrl.split('/storage/').pop();
+    if (path) {
+      return `${CDN_BASE_URL}/${path}`;
+    }
+  }
+  
+  // If it's just a path without /storage/
+  return `${CDN_BASE_URL}/${avatarUrl.replace(/^\/+/, '')}`;
+};
+
+
 /* =====================
    TYPES
 ===================== */
@@ -54,6 +84,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
 
+  // Add this RIGHT after your state declarations in AuthContext.tsx
+useEffect(() => {
+  const migrateStoredUser = async () => {
+    try {
+      const userJson = await AsyncStorage.getItem("user");
+      if (userJson) {
+        const parsedUser = JSON.parse(userJson);
+        // Force migration to CDN URL
+        if (parsedUser?.avatar && !parsedUser.avatar.includes('r2.dev')) {
+          const path = parsedUser.avatar.split('/storage/').pop();
+          const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
+          console.log('🔄 MIGRATING user to CDN:', {
+            from: parsedUser.avatar,
+            to: cdnUrl
+          });
+          parsedUser.avatar = cdnUrl;
+          await AsyncStorage.setItem("user", JSON.stringify(parsedUser));
+          setUser(parsedUser);
+        }
+      }
+    } catch (error) {
+      console.error('Migration error:', error);
+    }
+  };
+  
+  migrateStoredUser();
+}, []);
+
   /* =====================
      CLEAR STORAGE
   ===================== */
@@ -70,78 +128,92 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  /* =====================
-     FETCH FRESH USER DATA
-  ===================== */
-  const fetchFreshUserData = useCallback(async (): Promise<User | null> => {
-    try {
-      const accessToken = await AsyncStorage.getItem("accessToken");
-      if (!accessToken) {
-        console.log("No access token found");
-        return null;
-      }
+ /* =====================
+   FETCH FRESH USER DATA - FIXED
+===================== */
+const fetchFreshUserData = useCallback(async (): Promise<User | null> => {
+  try {
+    const accessToken = await AsyncStorage.getItem("accessToken");
+    if (!accessToken) {
+      console.log("No access token found");
+      return null;
+    }
 
-      console.log("Fetching fresh user data from server...");
-      const freshUser = await getCurrentUser();
-      console.log("Fresh user data fetched:", {
-        id: freshUser.id,
-        email: freshUser.email,
-        avatar: freshUser.avatar ? "present" : "missing"
-      });
+    console.log("Fetching fresh user data from server...");
+    const freshUser = await getCurrentUser();
+    
+    // Ensure avatar is full CDN URL
+    if (freshUser.avatar) {
+      freshUser.avatar = ensureFullAvatarUrl(freshUser.avatar);
+    }
+    
+    console.log("Fresh user data fetched:", {
+      id: freshUser.id,
+      email: freshUser.email,
+      avatar: freshUser.avatar ? "present" : "missing",
+      avatarUrl: freshUser.avatar?.substring(0, 50)
+    });
+    
+    if (freshUser) {
+      await AsyncStorage.setItem("user", JSON.stringify(freshUser));
+      return freshUser;
+    }
+  } catch (error: any) {
+    console.warn("Failed to fetch fresh user data:", error.message);
+  }
+  return null;
+}, []);
+
+  /* =====================
+   LOAD USER FROM STORAGE - FIXED
+===================== */
+const loadUserFromStorage = useCallback(async () => {
+  try {
+    const [userJson, accessToken] = await Promise.all([
+      AsyncStorage.getItem("user"),
+      AsyncStorage.getItem("accessToken"),
+    ]);
+
+    if (userJson && accessToken) {
+      console.log("Found stored user data, attempting to refresh...");
       
-      if (freshUser) {
-        await AsyncStorage.setItem("user", JSON.stringify(freshUser));
-        return freshUser;
-      }
-    } catch (error: any) {
-      console.warn("Failed to fetch fresh user data:", error.message);
-    }
-    return null;
-  }, []);
-
-  /* =====================
-     LOAD USER FROM STORAGE
-  ===================== */
-  const loadUserFromStorage = useCallback(async () => {
-    try {
-      const [userJson, accessToken] = await Promise.all([
-        AsyncStorage.getItem("user"),
-        AsyncStorage.getItem("accessToken"),
-      ]);
-
-      if (userJson && accessToken) {
-        console.log("Found stored user data, attempting to refresh...");
-        
-        try {
-          const freshUser = await fetchFreshUserData();
-          if (freshUser) {
-            setUser(freshUser);
-            console.log("Using fresh user data from server");
-          } else {
-            throw new Error("Could not fetch fresh data");
-          }
-        } catch (freshError) {
-          console.log("Using stored user data (fallback)");
-          const parsedUser: User = JSON.parse(userJson);
-          if (parsedUser?.id && parsedUser?.email && parsedUser?.role) {
-            setUser(parsedUser);
-          } else {
-            console.log("Invalid stored user data");
-            await clearStorage();
-          }
+      try {
+        const freshUser = await fetchFreshUserData();
+        if (freshUser) {
+          setUser(freshUser);
+          console.log("Using fresh user data from server");
+        } else {
+          throw new Error("Could not fetch fresh data");
         }
-      } else {
-        console.log("No stored user data found");
-        setUser(null);
+      } catch (freshError) {
+        console.log("Using stored user data (fallback)");
+        const parsedUser: User = JSON.parse(userJson);
+        
+        // ✅ FIXED: Ensure avatar is CDN URL even in fallback
+        if (parsedUser?.id && parsedUser?.email && parsedUser?.role) {
+          // Convert any local avatar URL to CDN
+          if (parsedUser.avatar && !parsedUser.avatar.includes('r2.dev')) {
+            parsedUser.avatar = ensureFullAvatarUrl(parsedUser.avatar);
+            console.log('🔄 Converted stored avatar to CDN:', parsedUser.avatar);
+          }
+          setUser(parsedUser);
+        } else {
+          console.log("Invalid stored user data");
+          await clearStorage();
+        }
       }
-    } catch (err) {
-      console.error("Error loading user from storage:", err);
-      await clearStorage();
-    } finally {
-      setLoading(false);
-      setInitialLoad(false);
+    } else {
+      console.log("No stored user data found");
+      setUser(null);
     }
-  }, [fetchFreshUserData]);
+  } catch (err) {
+    console.error("Error loading user from storage:", err);
+    await clearStorage();
+  } finally {
+    setLoading(false);
+    setInitialLoad(false);
+  }
+}, [fetchFreshUserData]);
 
   /* =====================
      INITIAL LOAD
@@ -149,59 +221,65 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   useEffect(() => {
     loadUserFromStorage();
   }, [loadUserFromStorage]);
+/* =====================
+   LOGIN - FIXED
+===================== */
+const login = async (email: string, password: string) => {
+  try {
+    setLoading(true);
+    console.log("AuthContext: Attempting login for", email);
 
-  /* =====================
-     LOGIN
-  ===================== */
-  const login = async (email: string, password: string) => {
-    try {
-      setLoading(true);
-      console.log("AuthContext: Attempting login for", email);
+    const response: AuthResponse = await apiLogin({ email, password });
 
-      const response: AuthResponse = await apiLogin({ email, password });
+    console.log("AuthContext login success:", {
+      user: response.user.email,
+      avatar: response.user.avatar,
+      hasToken: !!response.accessToken,
+    });
 
-      console.log("AuthContext login success:", {
-        user: response.user.email,
-        avatar: response.user.avatar,
-        hasToken: !!response.accessToken,
-      });
+    // Store tokens
+    await AsyncStorage.multiSet([
+      ["accessToken", response.accessToken],
+      ["refreshToken", response.refreshToken],
+    ]);
 
-      // Store tokens
-      await AsyncStorage.multiSet([
-        ["accessToken", response.accessToken],
-        ["refreshToken", response.refreshToken],
-      ]);
-
-      // Get fresh user data with avatar
-      let userToStore = response.user;
-      try {
-        const freshUser = await fetchFreshUserData();
-        if (freshUser) {
-          userToStore = freshUser;
-          console.log("Using fresh user data with avatar");
-        }
-      } catch (freshError) {
-        console.warn("Could not fetch fresh data, using response data");
-      }
-      
-      // Store user data
-      await AsyncStorage.setItem("user", JSON.stringify(userToStore));
-      setUser(userToStore);
-      
-      console.log("User stored after login:", userToStore);
-      
-      return {
-        status: "success",
-        message: response.message || "Login successful",
-      };
-    } catch (err: any) {
-      console.error("AuthContext login error:", err.message);
-      throw new Error(err.message || "Login failed");
-    } finally {
-      setLoading(false);
+    // ✅ FIXED: Ensure response user avatar is CDN URL
+    if (response.user.avatar && !response.user.avatar.includes('r2.dev')) {
+      response.user.avatar = ensureFullAvatarUrl(response.user.avatar);
     }
-  };
 
+    // Get fresh user data with avatar
+    let userToStore = response.user;
+    try {
+      const freshUser = await fetchFreshUserData();
+      if (freshUser) {
+        userToStore = freshUser;
+        console.log("Using fresh user data with avatar");
+      }
+    } catch (freshError) {
+      console.warn("Could not fetch fresh data, using response data");
+    }
+    
+    // Store user data
+    await AsyncStorage.setItem("user", JSON.stringify(userToStore));
+    setUser(userToStore);
+    
+    console.log("User stored after login:", {
+      ...userToStore,
+      avatar: userToStore.avatar ? '✅ CDN' : '❌ none'
+    });
+    
+    return {
+      status: "success",
+      message: response.message || "Login successful",
+    };
+  } catch (err: any) {
+    console.error("AuthContext login error:", err.message);
+    throw new Error(err.message || "Login failed");
+  } finally {
+    setLoading(false);
+  }
+};
   /* =====================
      REGISTER
   ===================== */
@@ -294,21 +372,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  /* =====================
-     UPDATE AUTH USER
-  ===================== */
-  const updateAuthUser = (updates: Partial<User>) => {
-    setUser(prev => {
-      if (!prev) return prev;
-      
-      const updated = { ...prev, ...updates };
-      console.log("Updating auth user locally:", updates);
-      
-      AsyncStorage.setItem("user", JSON.stringify(updated));
-      
-      return updated;
+/* =====================
+   UPDATE AUTH USER - FIXED
+===================== */
+const updateAuthUser = (updates: Partial<User>) => {
+  setUser(prev => {
+    if (!prev) return prev;
+    
+    // Ensure avatar is full CDN URL
+    let processedUpdates = { ...updates };
+    if (updates.avatar) {
+      processedUpdates.avatar = ensureFullAvatarUrl(updates.avatar);
+      console.log('🔄 Converting avatar to CDN URL:', processedUpdates.avatar);
+    }
+    
+    const updated = { ...prev, ...processedUpdates };
+    console.log("Updating auth user locally:", {
+      ...processedUpdates,
+      avatar: processedUpdates.avatar ? '✅ set' : 'no change'
     });
-  };
+    
+    // Store in AsyncStorage
+    AsyncStorage.setItem("user", JSON.stringify(updated))
+      .catch(err => console.error("Error saving user to storage:", err));
+    
+    return updated;
+  });
+};
 
   /* =====================
      IS AUTHENTICATED

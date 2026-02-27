@@ -4,14 +4,66 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Traits\CacheKeys;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
+    use CacheKeys;
+
+    protected $cacheTtl = 3600;
+
+    /**
+     * Get storage disk (R2 or public)
+     */
+    private function getStorageDisk()
+    {
+        return Storage::disk(config('filesystems.default'));
+    }
+
+    /**
+     * Generate URL for file path
+     */
+    private function getFileUrl($path)
+    {
+        if (!$path) {
+            return null;
+        }
+
+        try {
+            $disk = config('filesystems.default');
+            
+            // For R2 disk
+            if ($disk === 'r2') {
+                $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
+                return $baseUrl . '/' . ltrim($path, '/');
+            }
+            
+            // For local public disk
+            if ($disk === 'public') {
+                return asset('storage/' . ltrim($path, '/'));
+            }
+            
+            // For S3 or other disks, try to use the URL from config
+            $diskConfig = config("filesystems.disks.{$disk}");
+            if (isset($diskConfig['url'])) {
+                $baseUrl = rtrim($diskConfig['url'], '/');
+                return $baseUrl . '/' . ltrim($path, '/');
+            }
+            
+            // Fallback
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Error generating file URL: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     /**
      * Update user profile
      */
@@ -20,12 +72,8 @@ class UserController extends Controller
         try {
             $user = User::findOrFail($id);
             
-            // Authorization check
             if ($request->user()->id != $user->id) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthorized'
-                ], 403);
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
             }
 
             $validator = Validator::make($request->all(), [
@@ -38,29 +86,26 @@ class UserController extends Controller
             if ($validator->fails()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Validation failed',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
             $updateData = $request->only(['name', 'email', 'phone']);
             
-            // If avatar URL is provided directly (not file upload)
             if ($request->has('avatar') && filter_var($request->avatar, FILTER_VALIDATE_URL)) {
                 $updateData['avatar'] = $request->avatar;
             }
             
             $user->update($updateData);
-            
-            // Generate full avatar URL if it's stored locally
-            $avatarUrl = $user->avatar;
-            if ($user->avatar && !filter_var($user->avatar, FILTER_VALIDATE_URL)) {
-                if (Str::startsWith($user->avatar, 'avatars/')) {
-                    $avatarUrl = asset('storage/' . $user->avatar);
-                } elseif (Str::startsWith($user->avatar, 'storage/')) {
-                    $avatarUrl = asset($user->avatar);
-                }
+
+            // Clear cache
+            Cache::forget($this->getUserProfileCacheKey($user->id));
+            if ($user->role === 'farmer') {
+                Cache::forget($this->getFarmerProfileCacheKey($user->id));
             }
+            
+            // Get avatar URL
+            $avatarUrl = $this->getFileUrl($user->avatar);
             
             return response()->json([
                 'status' => 'success',
@@ -71,130 +116,93 @@ class UserController extends Controller
                     'email' => $user->email,
                     'phone' => $user->phone,
                     'role' => $user->role,
-                     'avatar' => $user->avatar ? asset('storage/' . $user->avatar) : null,
+                    'avatar' => $avatarUrl,
                 ]
             ]);
             
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User not found'
-            ], 404);
         } catch (\Exception $e) {
             Log::error('Update profile error: ' . $e->getMessage());
             return response()->json([
                 'status' => 'error',
                 'message' => 'Update failed',
-                'debug' => config('app.debug') ? $e->getMessage() : null
+                'error' => $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Upload avatar (image file)
+     * Upload avatar to CDN
      */
     public function uploadAvatar(Request $request, $id)
     {
         try {
             $user = User::findOrFail($id);
             
-            // Authorization check
             if ($request->user()->id != $user->id) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthorized'
-                ], 403);
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
             }
 
             $validator = Validator::make($request->all(), [
-                'avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
-            ], [
-                'avatar.required' => 'Please select an image file',
-                'avatar.image' => 'The file must be an image',
-                'avatar.mimes' => 'Only JPEG, PNG, JPG, and GIF images are allowed',
-                'avatar.max' => 'Image size must be less than 5MB',
+                'avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Validation failed',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
-            // Delete old avatar if exists and it's a local file
-            if ($user->avatar && !filter_var($user->avatar, FILTER_VALIDATE_URL)) {
-                $oldPath = $user->avatar;
-                if (Str::startsWith($oldPath, 'avatars/')) {
-                    $storagePath = 'public/' . $oldPath;
-                } elseif (Str::startsWith($oldPath, 'storage/avatars/')) {
-                    $storagePath = str_replace('storage/', 'public/', $oldPath);
-                } else {
-                    $storagePath = $oldPath;
-                }
-                
-                if (Storage::exists($storagePath)) {
-                    Storage::delete($storagePath);
+            // Delete old avatar from CDN
+            if ($user->avatar) {
+                if ($this->getStorageDisk()->exists($user->avatar)) {
+                    $this->getStorageDisk()->delete($user->avatar);
                 }
             }
 
-            // Store new avatar with unique filename
+            // Upload to CDN
             $file = $request->file('avatar');
-            $filename = 'avatar_' . $user->id . '_' . uniqid() . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('avatars', $filename, 'public');
-
-            // Also, before saving, log the update:
-             Log::info('Updating user avatar in database:', [
-               'user_id' => $user->id,
-               'old_avatar' => $user->avatar,
-                  'new_avatar' => $path,
-]);
+            $filename = 'avatars/' . $user->id . '_' . uniqid() . '_' . time() . '.' . $file->getClientOriginalExtension();
             
-            // Update user with relative path
-            $user->avatar = $path;
+            $this->getStorageDisk()->put($filename, file_get_contents($file), 'public');
+
+            // Update user
+            $user->avatar = $filename;
             $user->save();
-            
 
-               Log::info('User avatar updated:', [
-    'user_id' => $user->id,
-    'current_avatar' => $user->fresh()->avatar,
-]);
+            // Clear cache
+            Cache::forget($this->getUserProfileCacheKey($user->id));
+            if ($user->role === 'farmer') {
+                Cache::forget($this->getFarmerProfileCacheKey($user->id));
+            }
 
+            // Get avatar URL
+            $avatarUrl = $this->getFileUrl($filename);
 
-
-
-            // Generate full URL for response
-            $avatarUrl = asset('storage/' . $path);
+            Log::info('Avatar uploaded to CDN', [
+                'user_id' => $user->id,
+                'storage' => config('filesystems.default'),
+                'url' => $avatarUrl,
+            ]);
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'Avatar uploaded successfully',
                 'avatar_url' => $avatarUrl,
-                'avatar' => $avatarUrl, // Add both keys for compatibility
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
-                    'phone' => $user->phone,
-                    'role' => $user->role,
                     'avatar' => $avatarUrl,
                 ]
             ]);
             
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User not found'
-            ], 404);
         } catch (\Exception $e) {
             Log::error('Upload avatar error: ' . $e->getMessage());
-            Log::error('Upload avatar trace: ' . $e->getTraceAsString());
-            
             return response()->json([
                 'status' => 'error',
-                'message' => 'Upload failed. Please try again.',
-                'debug' => config('app.debug') ? $e->getMessage() : null
+                'message' => 'Upload failed',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
@@ -205,29 +213,19 @@ class UserController extends Controller
     public function show(Request $request, $id)
     {
         try {
-            $user = User::findOrFail($id);
+            $cacheKey = $this->getUserProfileCacheKey($id);
             
-            // Authorization check - users can only view their own profile
-            if ($request->user()->id != $user->id) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthorized'
-                ], 403);
-            }
-
-            // Generate full avatar URL
-            $avatarUrl = $user->avatar;
-            if ($user->avatar && !filter_var($user->avatar, FILTER_VALIDATE_URL)) {
-                if (Str::startsWith($user->avatar, 'avatars/')) {
-                    $avatarUrl = asset('storage/' . $user->avatar);
-                } elseif (Str::startsWith($user->avatar, 'storage/')) {
-                    $avatarUrl = asset($user->avatar);
+            $userData = Cache::remember($cacheKey, $this->cacheTtl, function () use ($id, $request) {
+                $user = User::findOrFail($id);
+                
+                if ($request->user()->id != $user->id) {
+                    return ['unauthorized' => true];
                 }
-            }
 
-            return response()->json([
-                'status' => 'success',
-                'user' => [
+                // Get avatar URL
+                $avatarUrl = $this->getFileUrl($user->avatar);
+
+                return [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
@@ -235,14 +233,18 @@ class UserController extends Controller
                     'avatar' => $avatarUrl,
                     'created_at' => $user->created_at,
                     'updated_at' => $user->updated_at,
-                ]
+                ];
+            });
+
+            if (isset($userData['unauthorized'])) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'user' => $userData
             ]);
             
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User not found'
-            ], 404);
         } catch (\Exception $e) {
             Log::error('Get user error: ' . $e->getMessage());
             return response()->json([
@@ -251,61 +253,63 @@ class UserController extends Controller
             ], 500);
         }
     }
-/**
- * Get farmer profile
- */
-public function getFarmerProfile(Request $request, $id)
-{
-    try {
-        $user = User::findOrFail($id);
-        
-        // Authorization check
-        if ($request->user()->id != $user->id) {
+
+    /**
+     * Get farmer profile
+     */
+    public function getFarmerProfile(Request $request, $id)
+    {
+        try {
+            $cacheKey = $this->getFarmerProfileCacheKey($id);
+            
+            $farmerData = Cache::remember($cacheKey, $this->cacheTtl, function () use ($id, $request) {
+                $user = User::findOrFail($id);
+                
+                if ($request->user()->id != $user->id) {
+                    return ['unauthorized' => true];
+                }
+
+                if ($user->role !== 'farmer') {
+                    return ['not_farmer' => true];
+                }
+
+                // Get avatar URL
+                $avatarUrl = $this->getFileUrl($user->avatar);
+
+                return [
+                    'farm_name' => $user->farm_name,
+                    'location' => $user->location,
+                    'phone' => $user->phone,
+                    'is_verified' => $user->is_verified,
+                    'verification_status' => $user->verification_status,
+                    'farm_description' => $user->farm_description,
+                    'farm_size' => $user->farm_size,
+                    'specialty' => $user->specialty,
+                    'avatar' => $avatarUrl,
+                ];
+            });
+
+            if (isset($farmerData['unauthorized'])) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+            }
+
+            if (isset($farmerData['not_farmer'])) {
+                return response()->json(['status' => 'error', 'message' => 'User is not a farmer'], 400);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'farmer' => $farmerData
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Get farmer profile error: ' . $e->getMessage());
             return response()->json([
                 'status' => 'error',
-                'message' => 'Unauthorized'
-            ], 403);
+                'message' => 'Failed to fetch farmer data'
+            ], 500);
         }
-
-        // Check if user is a farmer
-        if ($user->role !== 'farmer') {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User is not a farmer'
-            ], 400);
-        }
-
-        // ✅ FIX: Get avatar URL
-        $avatarUrl = $user->avatar ? asset('storage/' . $user->avatar) : null;
-
-        return response()->json([
-            'status' => 'success',
-            'farmer' => [
-                'farm_name' => $user->farm_name,
-                'location' => $user->location,
-                'phone' => $user->phone,
-                'is_verified' => $user->is_verified,
-                'verification_status' => $user->verification_status,
-                'farm_description' => $user->farm_description,
-                'farm_size' => $user->farm_size,
-                'specialty' => $user->specialty,
-                'avatar' => $avatarUrl, // ✅ ADDED: Include avatar
-            ]
-        ]);
-        
-    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => 'User not found'
-        ], 404);
-    } catch (\Exception $e) {
-        Log::error('Get farmer profile error: ' . $e->getMessage());
-        return response()->json([
-            'status' => 'error',
-            'message' => 'Failed to fetch farmer data'
-        ], 500);
     }
-}
 
     /**
      * Update farmer profile
@@ -315,20 +319,12 @@ public function getFarmerProfile(Request $request, $id)
         try {
             $user = User::findOrFail($id);
             
-            // Authorization check
             if ($request->user()->id != $user->id) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthorized'
-                ], 403);
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
             }
 
-            // Check if user is a farmer
             if ($user->role !== 'farmer') {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'User is not a farmer'
-                ], 400);
+                return response()->json(['status' => 'error', 'message' => 'User is not a farmer'], 400);
             }
 
             $validator = Validator::make($request->all(), [
@@ -343,12 +339,10 @@ public function getFarmerProfile(Request $request, $id)
             if ($validator->fails()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Validation failed',
                     'errors' => $validator->errors()
                 ], 422);
             }
 
-            // Update farmer-specific fields
             $farmerFields = ['farm_name', 'location', 'phone', 'farm_description', 'farm_size', 'specialty'];
             foreach ($farmerFields as $field) {
                 if ($request->has($field)) {
@@ -356,12 +350,14 @@ public function getFarmerProfile(Request $request, $id)
                 }
             }
 
-            // When user updates location or phone, reset verification status if not verified
             if (($request->has('location') || $request->has('phone')) && !$user->is_verified) {
                 $user->verification_status = 'pending';
             }
 
             $user->save();
+
+            // Clear cache
+            Cache::forget($this->getFarmerProfileCacheKey($user->id));
 
             return response()->json([
                 'status' => 'success',
@@ -378,17 +374,12 @@ public function getFarmerProfile(Request $request, $id)
                 ]
             ]);
             
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User not found'
-            ], 404);
         } catch (\Exception $e) {
             Log::error('Update farmer profile error: ' . $e->getMessage());
             return response()->json([
                 'status' => 'error',
                 'message' => 'Update failed',
-                'debug' => config('app.debug') ? $e->getMessage() : null
+                'error' => $e->getMessage()
             ], 500);
         }
     }

@@ -3,7 +3,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // For local development - use your computer's IP for mobile testing
-const API_BASE_URL = 'http://192.168.0.200:8000/api'; // Change to your Laravel server IP
+const API_BASE_URL = 'http://192.168.0.196:8000/api'; // Change to your Laravel server IP
 
 export interface Farmer {
   id: number;

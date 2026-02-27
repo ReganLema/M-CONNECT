@@ -4,6 +4,23 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from "./AuthContext";
 import { getUserProfile } from "@/api/user";
 
+
+
+
+const CDN_BASE_URL = 'https://pub-830fc031162b476396c6a260d2baec03.r2.dev';
+
+const ensureFullAvatarUrl = (avatarUrl?: string): string | undefined => {
+  if (!avatarUrl) return undefined;
+  if (avatarUrl.startsWith('http')) return avatarUrl;
+  if (avatarUrl.includes('/storage/')) {
+    const path = avatarUrl.split('/storage/').pop();
+    return path ? `${CDN_BASE_URL}/${path}` : avatarUrl;
+  }
+  return `${CDN_BASE_URL}/${avatarUrl.replace(/^\/+/, '')}`;
+};
+
+
+
 /* =========================
    USER TYPES
 ========================= */
@@ -50,27 +67,34 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
      FETCH USER PROFILE
   ========================= */
   const fetchUserProfile = useCallback(async (userId: number): Promise<User | null> => {
-    try {
-      console.log(`Fetching user profile for ID: ${userId}`);
-      const profile = await getUserProfile(userId);
-      
-      const userData: User = {
-        id: profile.id || userId,
-        name: profile.name || authUser?.name || "",
-        email: profile.email || authUser?.email || "",
-        role: (profile.role as UserRole) || (authUser?.role as UserRole) || "buyer",
-        avatar: profile.avatar || authUser?.avatar,
-        phone: profile.phone || authUser?.phone,
-        location: profile.location || authUser?.location,
-      };
-      
-      console.log("Fetched user profile:", userData);
-      return userData;
-    } catch (error) {
-      console.error("Failed to fetch user profile:", error);
-      return null;
-    }
-  }, [authUser]);
+  try {
+    console.log(`Fetching user profile for ID: ${userId}`);
+    const profile = await getUserProfile(userId);
+    
+    // Ensure avatar is full CDN URL
+    const avatar = ensureFullAvatarUrl(profile.avatar || authUser?.avatar);
+    
+    const userData: User = {
+      id: profile.id || userId,
+      name: profile.name || authUser?.name || "",
+      email: profile.email || authUser?.email || "",
+      role: (profile.role as UserRole) || (authUser?.role as UserRole) || "buyer",
+      avatar: avatar,
+      phone: profile.phone || authUser?.phone,
+      location: profile.location || authUser?.location,
+    };
+    
+    console.log("Fetched user profile:", {
+      ...userData,
+      avatar: userData.avatar ? '✅' : '❌'
+    });
+    
+    return userData;
+  } catch (error) {
+    console.error("Failed to fetch user profile:", error);
+    return null;
+  }
+}, [authUser]);
 
   /* =========================
      LOAD USER DATA

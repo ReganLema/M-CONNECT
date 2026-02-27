@@ -6,6 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Services\CacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Response;
+use Illuminate\Support\Facades\Artisan;
 
 class CacheController extends Controller
 {
@@ -14,23 +18,39 @@ class CacheController extends Controller
      */
     public function stats()
     {
+        $stats = CacheService::getStats();
+        
+        // Check if Redis is working
+        $isConnected = CacheService::testConnection();
+        
         return response()->json([
             'status' => 'success',
-            'data' => CacheService::getStats()
+            'data' => array_merge($stats, [
+                'cache_driver' => config('cache.default'),
+                'redis_connected' => $isConnected,
+            ])
         ]);
     }
-
     /**
      * Clear all cache
      */
     public function clear()
     {
-        Cache::flush();
+        try {
+            Cache::flush();
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'All cache cleared successfully'
-        ]);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'All cache cleared successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to clear cache', ['error' => $e->getMessage()]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to clear cache'
+            ], 500);
+        }
     }
 
     /**
@@ -38,14 +58,30 @@ class CacheController extends Controller
      */
     public function clearPattern(Request $request)
     {
-        $pattern = $request->input('pattern', '*');
-        $deleted = CacheService::clearByPattern($pattern);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => "Cleared {$deleted} cache keys",
-            'deleted' => $deleted
+        $request->validate([
+            'pattern' => 'sometimes|string|max:255'
         ]);
+
+        try {
+            $pattern = $request->input('pattern', '*');
+            $deleted = CacheService::clearByPattern($pattern);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Cleared {$deleted} cache keys matching '{$pattern}'",
+                'deleted' => $deleted
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to clear cache pattern', [
+                'pattern' => $pattern ?? '*',
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to clear cache pattern: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -53,12 +89,37 @@ class CacheController extends Controller
      */
     public function warmup()
     {
-        // Pre-populate cache with frequently accessed data
-        // Example: Cache all categories, popular products, etc.
+        try {
+            // Implement your warmup logic here
+            $warmedItems = $this->performWarmup();
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Cache warmed up successfully'
-        ]);
+            return response()->json([
+                'status' => 'success',
+                'message' => "Cache warmed up successfully. {$warmedItems} items cached.",
+                'warmed_items' => $warmedItems
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to warm up cache', ['error' => $e->getMessage()]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to warm up cache'
+            ], 500);
+        }
+    }
+
+    /**
+     * Example warmup implementation
+     */
+    private function performWarmup(): int
+    {
+        $count = 0;
+        
+        // Example: Cache frequently accessed data
+        // $categories = Category::all();
+        // Cache::put('all_categories', $categories, now()->addDay());
+        // $count++;
+        
+        return $count;
     }
 }

@@ -270,10 +270,12 @@ Route::prefix('farmers')->group(function () {
 
 
 
+// Cache API Routes
 
-// Cache management routes
 Route::middleware(['auth:api'])->prefix('cache')->group(function () {
     Route::get('/stats', [CacheController::class, 'stats']);
+    Route::get('/test', [CacheController::class, 'testConnection']);
+    Route::get('/key-info', [CacheController::class, 'keyInfo']);
     Route::post('/clear', [CacheController::class, 'clear']);
     Route::post('/clear-pattern', [CacheController::class, 'clearPattern']);
     Route::post('/warmup', [CacheController::class, 'warmup']);

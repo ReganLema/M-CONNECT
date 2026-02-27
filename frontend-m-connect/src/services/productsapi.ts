@@ -2,11 +2,11 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL = 'http://192.168.0.199:8000/api';
+const API_URL = 'http://192.168.0.196:8000/api';
 
 const productsApi = axios.create({
   baseURL: API_URL,
-  timeout: 30000, // Increased timeout for file uploads
+  timeout: 30000, 
 });
 
 // Add token to requests

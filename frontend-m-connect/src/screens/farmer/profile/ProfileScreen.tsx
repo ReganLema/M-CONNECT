@@ -1,6 +1,3 @@
-
-
-
 // src/screens/farmer/profile/ProfileScreen.tsx
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -44,8 +41,27 @@ const FarmerProfileScreen: React.FC = () => {
     location: "",
     phone: "",
     isVerified: false,
-    verificationStatus: "pending" // pending, under_review, verified
+    verificationStatus: "pending", // pending, under_review, verified
+     avatar: undefined as string | undefined,
   });
+
+
+// Add this useEffect in FarmerProfileScreen.tsx
+useEffect(() => {
+  const checkAndFixAvatar = async () => {
+    if (authUser?.avatar && !authUser.avatar.includes('r2.dev')) {
+      console.log('🔧 Auth avatar still local, forcing fix...');
+      const path = authUser.avatar.split('/storage/').pop();
+      const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
+      updateAuthUser({ avatar: cdnUrl });
+      await refreshAuth();
+    }
+  };
+  
+  checkAndFixAvatar();
+}, [authUser?.id]);
+
+
 
   /* FETCH FARMER DATA */
   const fetchFarmerData = useCallback(async () => {
@@ -53,22 +69,28 @@ const FarmerProfileScreen: React.FC = () => {
     
     try {
       const data = await getFarmerProfile(authUser.id);
+
       setFarmerData({
         farmName: data.farm_name || authUser?.name || "Farm",
         location: data.location || "Not specified",
         phone: data.phone || "Not specified",
         isVerified: data.is_verified || false,
-        verificationStatus: data.verification_status || "pending"
+        verificationStatus: data.verification_status || "pending",
+         avatar: data.avatar,
       });
+
     } catch (error) {
       console.error("Error fetching farmer data:", error);
+
       // Fallback to auth data
+
       setFarmerData({
         farmName: authUser?.name || "Farm",
         location: "Not specified",
         phone: "Not specified",
         isVerified: false,
-        verificationStatus: "pending"
+        verificationStatus: "pending",
+         avatar: authUser?.avatar
       });
     }
   }, [authUser]);
@@ -112,16 +134,24 @@ const FarmerProfileScreen: React.FC = () => {
     const currentUserId = authUser?.id;
     const timestamp = Date.now();
     
-    //  Priority 1: AuthContext avatar (always fresh)
+    // ✅ FIXED: Check if avatar is already a full URL (from CDN)
     if (authUser?.avatar) {
+      // If it's already a full URL (starts with http), use it directly
+      if (authUser.avatar.startsWith('http')) {
+        return `${authUser.avatar.split('?')[0]}?t=${timestamp}`;
+      }
+      // Otherwise, construct CDN URL
       const cleanUrl = authUser.avatar.split('?')[0];
-      return `${cleanUrl}?t=${timestamp}&auth=1`;
+      return `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${cleanUrl}?t=${timestamp}`;
     }
     
     //  Priority 2: UserContext avatar (should match auth)
     if (profileUser?.avatar && profileUser.id === currentUserId) {
+      if (profileUser.avatar.startsWith('http')) {
+        return `${profileUser.avatar.split('?')[0]}?t=${timestamp}`;
+      }
       const cleanUrl = profileUser.avatar.split('?')[0];
-      return `${cleanUrl}?t=${timestamp}&user=1`;
+      return `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${cleanUrl}?t=${timestamp}`;
     }
     
     // Generate from farm name if available
@@ -225,9 +255,14 @@ const FarmerProfileScreen: React.FC = () => {
       const avatarUrl = await uploadProfileImage(authUser.id, imageUri);
       console.log('Upload successful, avatar URL:', avatarUrl);
       
-      //  CRITICAL: Update both contexts immediately
-      updateAuthUser({ avatar: avatarUrl }); // Update AuthContext
-      updateAvatar(avatarUrl); // Update UserContext
+      // ✅ FIXED: Ensure we store the full CDN URL
+      const fullAvatarUrl = avatarUrl.startsWith('http') 
+        ? avatarUrl 
+        : `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${avatarUrl}`;
+      
+      // Update both contexts immediately
+      updateAuthUser({ avatar: fullAvatarUrl });
+      updateAvatar(fullAvatarUrl);
       
       // Refresh from server to ensure consistency
       await Promise.all([
@@ -278,6 +313,15 @@ const FarmerProfileScreen: React.FC = () => {
     }
   }, [farmerData.isVerified, farmerData.verificationStatus]);
 
+  // ✅ ADDED: Debug function to log avatar URL
+  const debugAvatar = useCallback(() => {
+    console.log('👤 Avatar Debug:', {
+      authAvatar: authUser?.avatar,
+      profileAvatar: profileUser?.avatar,
+      finalUrl: getAvatarUrl(),
+      userId: authUser?.id
+    });
+  }, [authUser, profileUser, getAvatarUrl]);
 
   /*RENDER */
   if (loading && !farmerData.farmName) {
@@ -290,6 +334,11 @@ const FarmerProfileScreen: React.FC = () => {
   }
 
   const avatarUrl = getAvatarUrl();
+  
+  // Debug on render
+  if (__DEV__) {
+    debugAvatar();
+  }
 
   return (
     <ScrollView 
@@ -313,6 +362,8 @@ const FarmerProfileScreen: React.FC = () => {
               className="h-full w-full"
               resizeMode="cover"
               key={`avatar-${authUser?.id}-${Date.now()}`}
+              onError={(e) => console.log('❌ Avatar load error:', e.nativeEvent.error)}
+              onLoad={() => console.log('✅ Avatar loaded successfully')}
             />
           </View>
           
@@ -469,9 +520,7 @@ const FarmerProfileScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      
-
-      {/*  NOTICE  */}
+      {/* NOTICE */}
       {!farmerData.isVerified && (
         <View className="mb-10 bg-yellow-50 border border-yellow-200 rounded-xl p-4">
           <Text className="text-yellow-700 text-sm">

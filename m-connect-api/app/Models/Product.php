@@ -6,24 +6,15 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class Product extends Model
 {
     use HasFactory;
 
-    /**
-     * Always append these accessors when model is converted to array / JSON
-     */
-    protected $appends = [
-        'image_url',
-    ];
+    protected $appends = ['image_url'];
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'name',
         'category',
@@ -35,25 +26,17 @@ class Product extends Model
         'user_id',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
         'price' => 'decimal:2',
     ];
 
-    /**
-     * Get the user (farmer) that owns the product.
-     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
     /**
-     * Accessor: full image URL
+     * Get CDN URL for image
      */
     public function getImageUrlAttribute(): ?string
     {
@@ -66,36 +49,49 @@ class Product extends Model
             return $this->image;
         }
 
-        return asset('storage/' . $this->image);
+        try {
+            $disk = config('filesystems.default');
+            
+            // For R2 disk
+            if ($disk === 'r2') {
+                $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
+                return $baseUrl . '/' . ltrim($this->image, '/');
+            }
+            
+            // For local public disk
+            if ($disk === 'public') {
+                return asset('storage/' . ltrim($this->image, '/'));
+            }
+            
+            // For other disks
+            $diskConfig = config("filesystems.disks.{$disk}");
+            if (isset($diskConfig['url'])) {
+                $baseUrl = rtrim($diskConfig['url'], '/');
+                return $baseUrl . '/' . ltrim($this->image, '/');
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 
-    /**
-     * Scope: only products for authenticated user
-     */
     public function scopeForCurrentUser($query)
     {
         if (Auth::check()) {
             return $query->where('user_id', Auth::id());
         }
-
         return $query->where('user_id', 0);
     }
 
-    /**
-     * Scope: filter by category
-     */
     public function scopeByCategory($query, $category)
     {
         if ($category) {
             return $query->where('category', $category);
         }
-
         return $query;
     }
 
-    /**
-     * Scope: search by name or description
-     */
     public function scopeSearch($query, $search)
     {
         if ($search) {
@@ -104,13 +100,9 @@ class Product extends Model
                   ->orWhere('description', 'like', "%{$search}%");
             });
         }
-
         return $query;
     }
 
-    /**
-     * Auto-generate slug on creation (safe)
-     */
     protected static function booted()
     {
         static::creating(function ($product) {
