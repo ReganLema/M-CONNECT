@@ -62,7 +62,7 @@ services:
       - redis
 
   # ============================================
-  # Laravel Backend API
+  # Laravel Backend API - FIXED
   # ============================================
   backend:
     build:
@@ -70,13 +70,19 @@ services:
       dockerfile: Dockerfile
     container_name: m-connect-backend
     restart: unless-stopped
-    working_dir: /var/www
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
-      - ./m-connect-api:/var/www
+    
       - backend-storage:/var/www/storage
-      - backend-cache:/var/www/bootstrap/cache
+      - ./m-connect-api/.env:/var/www/.env
+
+      # For development only - mount specific folders you need to edit
+      - ./m-connect-api/app:/var/www/app:delegated
+      - ./m-connect-api/routes:/var/www/routes:delegated
+      - ./m-connect-api/config:/var/www/config:delegated
+      - ./m-connect-api/database:/var/www/database:delegated
+      - ./m-connect-api/resources:/var/www/resources:delegated
     environment:
       # App
       APP_NAME: "${APP_NAME:-M-Connect}"
@@ -110,21 +116,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    #  Better startup command
     command: >
       sh -c "
-        composer install --no-interaction --optimize-autoloader &&
-        php artisan config:cache &&
-        php artisan route:cache &&
+        php artisan optimize:clear &&
+        php artisan migrate --force &&
+        php artisan storage:link &&
         php artisan serve --host=0.0.0.0 --port=8000
       "
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/up"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
       interval: 30s
       timeout: 10s
       retries: 3
 
   # ============================================
-  # Queue Worker (Optional - for background jobs)
+  # Queue Worker - FIXED
   # ============================================
   queue-worker:
     build:
@@ -132,9 +139,13 @@ services:
       dockerfile: Dockerfile
     container_name: m-connect-queue
     restart: unless-stopped
-    working_dir: /var/www
     volumes:
-      - ./m-connect-api:/var/www
+      #  Same volume mounts as backend
+      - backend-storage:/var/www/storage
+      - ./m-connect-api/.env:/var/www/.env
+      - ./m-connect-api/app:/var/www/app:delegated
+      - ./m-connect-api/routes:/var/www/routes:delegated
+      - ./m-connect-api/config:/var/www/config:delegated
     environment:
       DB_CONNECTION: mysql
       DB_HOST: mysql
@@ -163,9 +174,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./m-connect-api:/var/www
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./m-connect-api/public:/var/www/public:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
     networks:
       - m-connect-network
     depends_on:
@@ -179,9 +190,6 @@ services:
 networks:
   m-connect-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
 
 # ============================================
 # Volumes
@@ -192,6 +200,4 @@ volumes:
   redis-data:
     driver: local
   backend-storage:
-    driver: local
-  backend-cache:
     driver: local
