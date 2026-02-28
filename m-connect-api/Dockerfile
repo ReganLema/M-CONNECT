@@ -29,26 +29,41 @@ RUN docker-php-ext-install \
     zip \
     intl
 
-#Install Redis extension
+# Install Redis extension
 RUN pecl install redis-5.3.7 \
     && docker-php-ext-enable redis
 
-#Get Composer
+# Get Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-#Copy ALL application files FIRST
+# Copy composer files FIRST (for better caching and to avoid script execution issues)
+COPY composer.json composer.lock ./
+
+# Install dependencies - note the --no-scripts flag to prevent script execution
+RUN composer install --no-interaction --optimize-autoloader --no-dev --no-scripts
+
+# NOW copy the rest of the application
 COPY . .
 
-#THEN install composer dependencies
-RUN composer install --no-interaction --optimize-autoloader --no-dev
+# Run any post-install scripts now that all files are present
+RUN composer run-script post-autoload-dump || true
 
-#Set permissions AFTER everything is copied
+# Set permissions AFTER everything is copied
 RUN chown -R www-data:www-data /var/www \
     && chmod -R 775 /var/www/storage \
     && chmod -R 775 /var/www/bootstrap/cache
 
-#Expose port
+# Create a start script that uses Railway's PORT variable
+RUN echo '#!/bin/sh\n\
+php artisan config:cache\n\
+php artisan route:cache\n\
+php artisan migrate --force\n\
+php artisan storage:link\n\
+php artisan serve --host=0.0.0.0 --port=${PORT:-8000}' > /usr/local/bin/start.sh \
+    && chmod +x /usr/local/bin/start.sh
+
+# Expose port
 EXPOSE 8000
 
-#Use JSON array format for CMD (fixes warning)
-CMD ["sh", "-c", "php artisan config:cache && php artisan route:cache && php artisan serve --host=0.0.0.0 --port=8000"]
+# Use the start script
+CMD ["/usr/local/bin/start.sh"]
