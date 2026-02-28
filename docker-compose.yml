@@ -9,7 +9,7 @@ services:
     container_name: m-connect-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-password}
       MYSQL_DATABASE: ${DB_DATABASE:-m_connect}
       MYSQL_USER: ${DB_USERNAME:-m_connect}
       MYSQL_PASSWORD: ${DB_PASSWORD:-password}
@@ -20,7 +20,7 @@ services:
     networks:
       - m-connect-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-password}"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     container_name: m-connect-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-}"
     volumes:
       - redis-data:/data
     ports:
@@ -40,7 +40,7 @@ services:
     networks:
       - m-connect-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -62,7 +62,7 @@ services:
       - redis
 
   # ============================================
-  # Laravel Backend API - FIXED
+  # Laravel Backend API
   # ============================================
   backend:
     build:
@@ -73,21 +73,14 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
-    
-      - backend-storage:/var/www/storage
-      - ./m-connect-api/.env:/var/www/.env
-
-      # For development only - mount specific folders you need to edit
-      - ./m-connect-api/app:/var/www/app:delegated
-      - ./m-connect-api/routes:/var/www/routes:delegated
-      - ./m-connect-api/config:/var/www/config:delegated
-      - ./m-connect-api/database:/var/www/database:delegated
-      - ./m-connect-api/resources:/var/www/resources:delegated
+      
+      - ./m-connect-api/storage:/var/www/storage
+      - ./m-connect-api/.env:/var/www/.env:ro
     environment:
       # App
       APP_NAME: "${APP_NAME:-M-Connect}"
-      APP_ENV: "${APP_ENV:-local}"
-      APP_DEBUG: "${APP_DEBUG:-true}"
+      APP_ENV: "${APP_ENV:-production}"
+      APP_DEBUG: "${APP_DEBUG:-false}"
       APP_URL: "${APP_URL:-http://localhost:8000}"
       
       # Database
@@ -106,6 +99,14 @@ services:
       SESSION_DRIVER: redis
       QUEUE_CONNECTION: redis
       
+      # Cloudflare R2
+      FILESYSTEM_DISK: r2
+      R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID}"
+      R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY}"
+      R2_BUCKET: "${R2_BUCKET}"
+      R2_ENDPOINT: "${R2_ENDPOINT}"
+      R2_PUBLIC_URL: "${R2_PUBLIC_URL}"
+      
       # JWT
       JWT_SECRET: "${JWT_SECRET}"
       JWT_TTL: "${JWT_TTL:-1440}"
@@ -116,22 +117,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    #  Better startup command
-    command: >
-      sh -c "
-        php artisan optimize:clear &&
-        php artisan migrate --force &&
-        php artisan storage:link &&
-        php artisan serve --host=0.0.0.0 --port=8000
-      "
+    command: ["sh", "-c", "php artisan migrate --force && php artisan storage:link && php artisan serve --host=0.0.0.0 --port=8000"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/up"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
 
   # ============================================
-  # Queue Worker - FIXED
+  # Queue Worker
   # ============================================
   queue-worker:
     build:
@@ -140,12 +135,8 @@ services:
     container_name: m-connect-queue
     restart: unless-stopped
     volumes:
-      #  Same volume mounts as backend
-      - backend-storage:/var/www/storage
-      - ./m-connect-api/.env:/var/www/.env
-      - ./m-connect-api/app:/var/www/app:delegated
-      - ./m-connect-api/routes:/var/www/routes:delegated
-      - ./m-connect-api/config:/var/www/config:delegated
+      - ./m-connect-api/storage:/var/www/storage
+      - ./m-connect-api/.env:/var/www/.env:ro
     environment:
       DB_CONNECTION: mysql
       DB_HOST: mysql
@@ -161,28 +152,7 @@ services:
       - mysql
       - redis
       - backend
-    command: php artisan queue:work --verbose --tries=3 --timeout=90
-
-  # ============================================
-  # Nginx (Optional - for production)
-  # ============================================
-  nginx:
-    image: nginx:alpine
-    container_name: m-connect-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./m-connect-api/public:/var/www/public:ro
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-    networks:
-      - m-connect-network
-    depends_on:
-      - backend
-    profiles:
-      - production
+    command: ["php", "artisan", "queue:work", "--verbose", "--tries=3", "--timeout=90"]
 
 # ============================================
 # Networks
@@ -198,6 +168,4 @@ volumes:
   mysql-data:
     driver: local
   redis-data:
-    driver: local
-  backend-storage:
     driver: local

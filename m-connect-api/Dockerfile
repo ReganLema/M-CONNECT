@@ -29,31 +29,26 @@ RUN docker-php-ext-install \
     zip \
     intl
 
-#  Install Redis extension
+#Install Redis extension
 RUN pecl install redis-5.3.7 \
     && docker-php-ext-enable redis
 
-# Get Composer
+#Get Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-#  Copy composer files FIRST (better caching)
-COPY composer.json composer.lock ./
-
-#  Install dependencies BEFORE copying the rest of the app
-RUN composer install --no-interaction --optimize-autoloader --no-dev
-
-#  Now copy the rest of the application
+#Copy ALL application files FIRST
 COPY . .
 
-#  Set permissions AFTER copying all files
+#THEN install composer dependencies
+RUN composer install --no-interaction --optimize-autoloader --no-dev
+
+#Set permissions AFTER everything is copied
 RUN chown -R www-data:www-data /var/www \
     && chmod -R 775 /var/www/storage \
     && chmod -R 775 /var/www/bootstrap/cache
 
-# Expose port
+#Expose port
 EXPOSE 8000
 
-# Better startup command with error handling
-CMD php artisan optimize && \
-    php artisan storage:link && \
-    php artisan serve --host=0.0.0.0 --port=8000
+#Use JSON array format for CMD (fixes warning)
+CMD ["sh", "-c", "php artisan config:cache && php artisan route:cache && php artisan serve --host=0.0.0.0 --port=8000"]
