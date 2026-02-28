@@ -5,7 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Services\CacheService;
 
-class CacheClearCommand extends Command
+class CacheClearPatternCommand extends Command  // Changed class name
 {
     protected $signature = 'cache:clear-pattern {pattern}';
     protected $description = 'Clear cache keys matching a pattern';
