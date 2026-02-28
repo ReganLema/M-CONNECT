@@ -55,11 +55,13 @@ RUN chown -R www-data:www-data /var/www \
 
 # Create a start script that uses Railway's PORT variable
 RUN echo '#!/bin/sh\n\
+echo "Starting M-CONNECT on Railway"\n\
 php artisan config:cache\n\
 php artisan route:cache\n\
 php artisan migrate --force\n\
 php artisan storage:link\n\
-php artisan serve --host=0.0.0.0 --port=${PORT:-8000}' > /usr/local/bin/start.sh \
+echo "Starting PHP server on port ${PORT:-8000}"\n\
+exec php -S 0.0.0.0:${PORT:-8000} -t public' > /usr/local/bin/start.sh \
     && chmod +x /usr/local/bin/start.sh
 
 # Expose port
