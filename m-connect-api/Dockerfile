@@ -1,5 +1,4 @@
-FROM php:8.2-fpm
-
+FROM php:8.2-cli
 # Set working directory
 WORKDIR /var/www
 
@@ -60,8 +59,8 @@ php artisan config:cache\n\
 php artisan route:cache\n\
 php artisan migrate --force\n\
 php artisan storage:link\n\
-echo "Starting PHP server on port ${PORT:-8000}"\n\
-exec php -S 0.0.0.0:${PORT:-8000} -t public' > /usr/local/bin/start.sh \
+echo "Starting PHP server on port $PORT"\n\
+exec php -S 0.0.0.0:$PORT -t public' > /usr/local/bin/start.sh \
     && chmod +x /usr/local/bin/start.sh
 
 # Expose port
