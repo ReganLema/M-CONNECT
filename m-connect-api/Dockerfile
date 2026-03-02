@@ -55,15 +55,17 @@ RUN chown -R www-data:www-data /var/www \
 # Create a start script that uses Railway's PORT variable
 RUN echo '#!/bin/sh\n\
 echo "Starting M-CONNECT on Railway"\n\
+php artisan config:clear\n\
+php artisan route:clear\n\
 php artisan config:cache\n\
 php artisan route:cache\n\
 php artisan migrate --force\n\
-php artisan storage:link\n\
-echo "Starting PHP server on port $PORT"\n\
-exec php -S 0.0.0.0:$PORT -t public' > /usr/local/bin/start.sh \
+php artisan storage:link || true\n\
+echo "Starting Laravel server on port $PORT"\n\
+exec php artisan serve --host=0.0.0.0 --port=$PORT' > /usr/local/bin/start.sh \
     && chmod +x /usr/local/bin/start.sh
 
-# Expose port
+# Expose port (not required by Railway but harmless)
 EXPOSE 8000
 
 # Use the start script
