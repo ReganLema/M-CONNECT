@@ -193,23 +193,26 @@ class ProductController extends Controller
             // Upload to CDN (R2 or local)
             $imagePath = null;
             if ($request->hasFile('image')) {
-                TracingService::addEvent('Image Upload Started', [
-                    'file.size' => $request->file('image')->getSize(),
-                ]);
+              TracingService::addEvent('Image Upload Started', [
+                  'file.size' => $request->file('image')->getSize(),
+              ]);
 
-                $image = $request->file('image');
-                $filename = 'products/' . uniqid() . '_' . time() . '.' . $image->getClientOriginalExtension();
-                
-                // Upload to storage (R2 or local)
-                $this->getStorageDisk()->put($filename, file_get_contents($image), 'public');
-                $imagePath = $filename;
+             $image = $request->file('image');
+             $filename = 'products/' . uniqid() . '_' . time() . '.' . $image->getClientOriginalExtension();
+    
+           // Upload to storage and get the actual path
+          $imagePath = $this->getStorageDisk()->putFileAs(
+           'products',
+            $image,
+            basename($filename),
+           'public'
+    );
 
-                TracingService::addEvent('Image Upload Completed', [
-                    'file.path' => $imagePath,
-                    'storage' => config('filesystems.default'),
-                ]);
-            }
-
+    TracingService::addEvent('Image Upload Completed', [
+        'file.path' => $imagePath,
+        'storage' => config('filesystems.default'),
+    ]);
+}
             // Create product
             $product = Product::create([
                 'name' => $request->name,
@@ -524,4 +527,8 @@ class ProductController extends Controller
             ], 500);
         }
     }
+
+
+
+    
 }

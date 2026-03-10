@@ -56,7 +56,7 @@ return [
             'bucket' => env('R2_BUCKET'),
             'endpoint' => env('R2_ENDPOINT'),
             'url' => env('R2_PUBLIC_URL'),
-            'use_path_style_endpoint' => false,
+            'use_path_style_endpoint' => true,
             'visibility' => 'public',
             'throw' => false,
             'report' => false,
