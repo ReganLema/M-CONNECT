@@ -280,3 +280,10 @@ Route::middleware(['auth:api'])->prefix('cache')->group(function () {
     Route::post('/clear-pattern', [CacheController::class, 'clearPattern']);
     Route::post('/warmup', [CacheController::class, 'warmup']);
 });
+
+
+Route::get('/health', function () {
+    return response()->json([
+        'status' => 'ok'
+    ]);
+});
