@@ -1,4 +1,7 @@
-// HomeScreen.tsx 
+
+
+
+//src/screens/public/HomeScreen.tsx
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -74,7 +77,7 @@ export default function HomeScreen() {
     }
   };
 
-  // ✅ Individual category images require auth
+  //Individual category images require auth
   const handleCategoryPress = (category: any) => {
     if (!user) {
       setLoginPromptVisible(true);
@@ -84,7 +87,7 @@ export default function HomeScreen() {
     navigation.navigate("Market", { category: category.name });
   };
 
-  // ✅ Individual product images require auth
+  //Individual product images require auth
   const handleProductPress = (product: any) => {
     if (!user) {
       setLoginPromptVisible(true);
@@ -94,7 +97,7 @@ export default function HomeScreen() {
     navigation.navigate("Market", { product });
   };
 
-  // ✅ Modal items require auth (when selecting from modal)
+  //Modal items require auth (when selecting from modal)
   const handleModalItemPress = (item: any) => {
     if (!user) {
       setLoginPromptVisible(true);
@@ -113,7 +116,7 @@ export default function HomeScreen() {
     }
   };
 
-  // ✅ "See All" Categories button - NO AUTH REQUIRED
+  // "See All" Categories button - NO AUTH REQUIRED
   const handleViewAllCategories = () => {
     setModalTitle('All Categories');
     setModalType('categories');
@@ -121,7 +124,7 @@ export default function HomeScreen() {
     setModalVisible(true);
   };
 
-  // ✅ "View All" Products button - NO AUTH REQUIRED
+  //"View All" Products button - NO AUTH REQUIRED
   const handleViewAllProducts = () => {
     setModalTitle('All Products');
     setModalType('products');
@@ -157,7 +160,7 @@ export default function HomeScreen() {
     navigation.getParent()?.navigate("Auth", { screen: "Register" });
   };
 
-  // ✅ Navigate to guide screens - NO AUTH REQUIRED
+  //Navigate to guide screens - NO AUTH REQUIRED
   const handleGuidePress = (guideType: string) => {
     if (guideType === 'farmer') {
       navigation.navigate('StartFarming');
@@ -199,7 +202,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 className="p-3 rounded-2xl bg-white/10 border border-white/20"
                 activeOpacity={0.7}
-                onPress={() => navigation.navigate("Notifications")}
+               // onPress={() => navigation.navigate("Notifications")}
               >
                 <Ionicons
                   name="notifications-outline"
@@ -209,6 +212,8 @@ export default function HomeScreen() {
                 <View className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white" />
               </TouchableOpacity>
             </View>
+
+            
 
             {!user && (
               <View className="flex-row space-x-4">
@@ -289,7 +294,7 @@ export default function HomeScreen() {
                     Browse by category
                   </Text>
                 </View>
-                {/* ✅ "See All" button - NO AUTH REQUIRED */}
+                {/*"See All" button - NO AUTH REQUIRED */}
                 <TouchableOpacity
                   className="flex-row items-center"
                   onPress={handleViewAllCategories}
@@ -322,7 +327,7 @@ export default function HomeScreen() {
                       key={category.id}
                       className={index === 0 ? "ml-0" : "ml-4"}
                     >
-                      {/* ✅ Individual category images - AUTH REQUIRED */}
+                      {/*Individual category images - AUTH REQUIRED */}
                       <CategoryCard
                         name={category.name}
                         image={category.image}
@@ -347,7 +352,7 @@ export default function HomeScreen() {
                     Fresh from our farms
                   </Text>
                 </View>
-                {/* ✅ "View All" button - NO AUTH REQUIRED */}
+                {/*"View All" button - NO AUTH REQUIRED */}
                 <TouchableOpacity
                   className="flex-row items-center"
                   onPress={handleViewAllProducts}
@@ -380,7 +385,7 @@ export default function HomeScreen() {
                       key={product.id}
                       className={index === 0 ? "ml-0" : "ml-5"}
                     >
-                      {/* ✅ Individual product images - AUTH REQUIRED */}
+                      {/*Individual product images - AUTH REQUIRED */}
                       <ProductCard 
                         product={product} 
                         onPress={() => handleProductPress(product)}
@@ -393,7 +398,7 @@ export default function HomeScreen() {
               )}
             </View>
 
-            {/* ✅ Agribusiness Guide Section (Navigation Only) - NO AUTH REQUIRED */}
+            {/*Agribusiness Guide Section (Navigation Only) - NO AUTH REQUIRED */}
             <AgribusinessGuideSection onGuidePress={handleGuidePress} />
 
             {/* Stats Card */}
@@ -483,7 +488,7 @@ export default function HomeScreen() {
   );
 }
 
-// ✅ Agribusiness Guide Section (Navigation Only - No Mock Data)
+// Agribusiness Guide Section (Navigation Only - No Mock Data)
 const AgribusinessGuideSection = ({ onGuidePress }: { onGuidePress: (type: string) => void }) => {
   const guides = [
     {

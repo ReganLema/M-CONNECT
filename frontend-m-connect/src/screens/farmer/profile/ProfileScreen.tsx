@@ -1,6 +1,6 @@
 // src/screens/farmer/profile/ProfileScreen.tsx
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -41,34 +41,49 @@ const FarmerProfileScreen: React.FC = () => {
     location: "",
     phone: "",
     isVerified: false,
-    verificationStatus: "pending", // pending, under_review, verified
-     avatar: undefined as string | undefined,
+    verificationStatus: "pending",
+    avatar: undefined as string | undefined,
   });
-
-
-// Add this useEffect in FarmerProfileScreen.tsx
-useEffect(() => {
-  const checkAndFixAvatar = async () => {
-    if (authUser?.avatar && !authUser.avatar.includes('r2.dev')) {
-      console.log('🔧 Auth avatar still local, forcing fix...');
-      const path = authUser.avatar.split('/storage/').pop();
-      const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
-      updateAuthUser({ avatar: cdnUrl });
-      await refreshAuth();
-    }
-  };
   
-  checkAndFixAvatar();
-}, [authUser?.id]);
+  // ✅ Add ref to prevent multiple fetches
+  const isMounted = useRef(true);
+  const isFetching = useRef(false);
 
+  // ✅ Fix avatar URL on mount
+  useEffect(() => {
+    const checkAndFixAvatar = async () => {
+      if (authUser?.avatar && !authUser.avatar.includes('r2.dev')) {
+        console.log('🔧 Auth avatar still local, forcing fix...');
+        const path = authUser.avatar.split('/storage/').pop();
+        const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
+        updateAuthUser({ avatar: cdnUrl });
+        await refreshAuth();
+      }
+    };
+    
+    checkAndFixAvatar();
+    
+    return () => {
+      isMounted.current = false;
+    };
+  }, [authUser?.id]);
 
-
-  /* FETCH FARMER DATA */
+  /* FETCH FARMER DATA - WITH PREVENTION OF MULTIPLE CALLS */
   const fetchFarmerData = useCallback(async () => {
+    // ✅ Prevent multiple simultaneous fetches
+    if (isFetching.current) {
+      console.log('⏭️ Skipping fetch - already in progress');
+      return;
+    }
+    
     if (!authUser?.id) return;
+    
+    isFetching.current = true;
     
     try {
       const data = await getFarmerProfile(authUser.id);
+      
+      if (!isMounted.current) return;
 
       setFarmerData({
         farmName: data.farm_name || authUser?.name || "Farm",
@@ -76,76 +91,83 @@ useEffect(() => {
         phone: data.phone || "Not specified",
         isVerified: data.is_verified || false,
         verificationStatus: data.verification_status || "pending",
-         avatar: data.avatar,
+        avatar: data.avatar,
       });
 
     } catch (error) {
       console.error("Error fetching farmer data:", error);
+      
+      if (!isMounted.current) return;
 
       // Fallback to auth data
-
       setFarmerData({
         farmName: authUser?.name || "Farm",
         location: "Not specified",
         phone: "Not specified",
         isVerified: false,
         verificationStatus: "pending",
-         avatar: authUser?.avatar
+        avatar: authUser?.avatar
       });
+    } finally {
+      if (isMounted.current) {
+        isFetching.current = false;
+      }
     }
   }, [authUser]);
 
-  /*LOAD DATA */
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    await fetchFarmerData();
-    setLoading(false);
-  }, [fetchFarmerData]);
-
-  /*EFFECTS */
+  /* LOAD DATA - ONLY ON MOUNT */
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    const loadInitialData = async () => {
+      setLoading(true);
+      await fetchFarmerData();
+      setLoading(false);
+    };
+    
+    loadInitialData();
+  }, [fetchFarmerData]); // ✅ Only runs on mount
 
+  /* ✅ FOCUS EFFECT - Only refresh if needed, not on every focus */
   useFocusEffect(
     useCallback(() => {
-      console.log("FarmerProfileScreen focused, refreshing data...");
-      loadData();
-      // Refresh user context to ensure avatar is up to date
-      refreshUser();
-    }, [loadData, refreshUser])
+      console.log("FarmerProfileScreen focused");
+      // ✅ Only refresh if we have data and user is logged in
+      if (authUser?.id && !isFetching.current) {
+        fetchFarmerData();
+      }
+    }, [authUser?.id, fetchFarmerData])
   );
-
 
   /* PULL TO REFRESH */
   const onRefresh = useCallback(async () => {
+    if (refreshing) return;
+    
     setRefreshing(true);
-    await Promise.all([
-      fetchFarmerData(),
-      refreshUser(),
-      refreshAuth(),
-    ]);
-    setRefreshing(false);
-  }, [fetchFarmerData, refreshUser, refreshAuth]);
-
+    try {
+      await Promise.all([
+        fetchFarmerData(),
+        refreshUser(),
+        refreshAuth(),
+      ]);
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchFarmerData, refreshUser, refreshAuth, refreshing]);
 
   /* GET AVATAR URL */
   const getAvatarUrl = useCallback(() => {
     const currentUserId = authUser?.id;
     const timestamp = Date.now();
     
-    // ✅ FIXED: Check if avatar is already a full URL (from CDN)
     if (authUser?.avatar) {
-      // If it's already a full URL (starts with http), use it directly
       if (authUser.avatar.startsWith('http')) {
         return `${authUser.avatar.split('?')[0]}?t=${timestamp}`;
       }
-      // Otherwise, construct CDN URL
       const cleanUrl = authUser.avatar.split('?')[0];
       return `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${cleanUrl}?t=${timestamp}`;
     }
     
-    //  Priority 2: UserContext avatar (should match auth)
     if (profileUser?.avatar && profileUser.id === currentUserId) {
       if (profileUser.avatar.startsWith('http')) {
         return `${profileUser.avatar.split('?')[0]}?t=${timestamp}`;
@@ -154,17 +176,15 @@ useEffect(() => {
       return `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${cleanUrl}?t=${timestamp}`;
     }
     
-    // Generate from farm name if available
     if (farmerData.farmName) {
       const cleanName = farmerData.farmName.trim().replace(/\s+/g, '+');
       return `https://ui-avatars.com/api/?name=${cleanName}&background=22C55E&color=fff&size=128&t=${timestamp}`;
     }
     
-    // Default farmer avatar
     return `https://cdn-icons-png.flaticon.com/512/1995/1995525.png?t=${timestamp}`;
   }, [authUser, profileUser, farmerData.farmName]);
 
-  /*IMAGE PICKER */
+  /* IMAGE PICKER */
   const pickImage = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -178,18 +198,9 @@ useEffect(() => {
         "Update Profile Picture",
         "Choose an option",
         [
-          {
-            text: "Take Photo",
-            onPress: () => launchCamera()
-          },
-          {
-            text: "Choose from Gallery",
-            onPress: () => launchImageLibrary()
-          },
-          {
-            text: "Cancel",
-            style: "cancel"
-          }
+          { text: "Take Photo", onPress: () => launchCamera() },
+          { text: "Choose from Gallery", onPress: () => launchImageLibrary() },
+          { text: "Cancel", style: "cancel" }
         ]
       );
     } catch (error) {
@@ -241,7 +252,7 @@ useEffect(() => {
     }
   };
 
-  /*HANDLE IMAGE UPLOAD */
+  /* HANDLE IMAGE UPLOAD */
   const handleImageSelected = async (imageUri: string) => {
     if (!authUser?.id) {
       Alert.alert('Error', 'User not found. Please login again.');
@@ -251,20 +262,16 @@ useEffect(() => {
     setUploading(true);
     
     try {
-      // Upload to server
       const avatarUrl = await uploadProfileImage(authUser.id, imageUri);
       console.log('Upload successful, avatar URL:', avatarUrl);
       
-      // ✅ FIXED: Ensure we store the full CDN URL
       const fullAvatarUrl = avatarUrl.startsWith('http') 
         ? avatarUrl 
         : `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${avatarUrl}`;
       
-      // Update both contexts immediately
       updateAuthUser({ avatar: fullAvatarUrl });
       updateAvatar(fullAvatarUrl);
       
-      // Refresh from server to ensure consistency
       await Promise.all([
         refreshAuth(),
         refreshUser(),
@@ -282,38 +289,25 @@ useEffect(() => {
     }
   };
 
-  /*VERIFICATION HELPERS */
+  /* VERIFICATION HELPERS */
   const getVerificationText = useCallback(() => {
-    if (farmerData.isVerified) {
-      return "Verified Seller";
-    }
-    
+    if (farmerData.isVerified) return "Verified Seller";
     switch (farmerData.verificationStatus) {
-      case "under_review":
-        return "Under Review";
-      case "pending":
-        return "Not Verified";
-      default:
-        return "Not Verified";
+      case "under_review": return "Under Review";
+      case "pending": return "Not Verified";
+      default: return "Not Verified";
     }
   }, [farmerData.isVerified, farmerData.verificationStatus]);
 
   const getVerificationColor = useCallback(() => {
-    if (farmerData.isVerified) {
-      return "#22C55E";
-    }
-    
+    if (farmerData.isVerified) return "#22C55E";
     switch (farmerData.verificationStatus) {
-      case "under_review":
-        return "#F59E0B";
-      case "pending":
-        return "#9CA3AF";
-      default:
-        return "#9CA3AF";
+      case "under_review": return "#F59E0B";
+      default: return "#9CA3AF";
     }
   }, [farmerData.isVerified, farmerData.verificationStatus]);
 
-  // ✅ ADDED: Debug function to log avatar URL
+  /* DEBUG */
   const debugAvatar = useCallback(() => {
     console.log('👤 Avatar Debug:', {
       authAvatar: authUser?.avatar,
@@ -323,7 +317,7 @@ useEffect(() => {
     });
   }, [authUser, profileUser, getAvatarUrl]);
 
-  /*RENDER */
+  /* RENDER */
   if (loading && !farmerData.farmName) {
     return (
       <View className="flex-1 bg-gray-50 justify-center items-center">
@@ -335,7 +329,6 @@ useEffect(() => {
 
   const avatarUrl = getAvatarUrl();
   
-  // Debug on render
   if (__DEV__) {
     debugAvatar();
   }
@@ -354,7 +347,6 @@ useEffect(() => {
     >
       {/* PROFILE HEADER */}
       <View className="bg-white rounded-2xl p-6 shadow-sm mb-6 items-center">
-        {/* Avatar Container */}
         <View className="relative">
           <View className="h-24 w-24 rounded-full mb-4 overflow-hidden bg-gray-200">
             <Image
@@ -367,7 +359,6 @@ useEffect(() => {
             />
           </View>
           
-          {/* Camera Button Overlay */}
           <TouchableOpacity
             onPress={pickImage}
             disabled={uploading}
@@ -382,47 +373,30 @@ useEffect(() => {
           </TouchableOpacity>
         </View>
 
-        {/* Farm Name */}
         <Text className="text-2xl font-bold text-gray-900">
           {farmerData.farmName}
         </Text>
 
-        {/* Verification Status */}
         <View className="flex-row items-center mt-1">
-          <CheckCircle
-            size={16}
-            color={getVerificationColor()}
-          />
-          <Text
-            className={`ml-1 text-sm font-medium ${
-              farmerData.isVerified 
-                ? "text-green-600" 
-                : farmerData.verificationStatus === "under_review" 
-                  ? "text-yellow-600" 
-                  : "text-gray-400"
-            }`}
-          >
+          <CheckCircle size={16} color={getVerificationColor()} />
+          <Text className={`ml-1 text-sm font-medium ${
+            farmerData.isVerified ? "text-green-600" : 
+            farmerData.verificationStatus === "under_review" ? "text-yellow-600" : "text-gray-400"
+          }`}>
             {getVerificationText()}
           </Text>
         </View>
 
-        {/* Location */}
         <View className="flex-row items-center mt-4">
           <MapPin size={18} color="#6B7280" />
-          <Text className="text-gray-600 ml-2">
-            {farmerData.location}
-          </Text>
+          <Text className="text-gray-600 ml-2">{farmerData.location}</Text>
         </View>
 
-        {/* Phone */}
         <View className="flex-row items-center mt-2">
           <Phone size={18} color="#6B7280" />
-          <Text className="text-gray-600 ml-2">
-            {farmerData.phone}
-          </Text>
+          <Text className="text-gray-600 ml-2">{farmerData.phone}</Text>
         </View>
 
-        {/* Edit Profile Button */}
         <TouchableOpacity
           onPress={() => navigation.navigate("EditFarmerProfile", { 
             farmerData: {
@@ -438,19 +412,14 @@ useEffect(() => {
           style={{ elevation: 2 }}
         >
           <Edit3 size={18} color="white" />
-          <Text className="text-white ml-2 font-semibold">
-            Edit Profile
-          </Text>
+          <Text className="text-white ml-2 font-semibold">Edit Profile</Text>
         </TouchableOpacity>
       </View>
 
       {/* QUICK ACTIONS */}
       <View className="bg-white rounded-2xl p-4 shadow-sm mb-6">
-        <Text className="text-lg font-bold mb-4 text-gray-900">
-          Seller Tools
-        </Text>
+        <Text className="text-lg font-bold mb-4 text-gray-900">Seller Tools</Text>
 
-        {/* Verification Button */}
         <TouchableOpacity
           onPress={() => navigation.navigate("Verification")}
           className="flex-row items-center justify-between p-4 bg-gray-50 rounded-xl mb-3"
@@ -459,9 +428,7 @@ useEffect(() => {
           <View className="flex-row items-center">
             <ShieldCheck size={22} color="#22C55E" />
             <View className="ml-3">
-              <Text className="font-medium text-gray-800">
-                Verification / KYC
-              </Text>
+              <Text className="font-medium text-gray-800">Verification / KYC</Text>
               <Text className="text-xs text-gray-500">
                 {farmerData.isVerified
                   ? "Account verified"
@@ -474,7 +441,6 @@ useEffect(() => {
           <ChevronRight size={18} color="#9CA3AF" />
         </TouchableOpacity>
 
-        {/* Earnings */}
         <TouchableOpacity
           onPress={() => navigation.navigate("Earnings")}
           className="flex-row items-center justify-between p-4 bg-gray-50 rounded-xl mb-3"
@@ -482,14 +448,11 @@ useEffect(() => {
         >
           <View className="flex-row items-center">
             <Wallet size={22} color="#22C55E" />
-            <Text className="ml-3 font-medium text-gray-800">
-              Earnings
-            </Text>
+            <Text className="ml-3 font-medium text-gray-800">Earnings</Text>
           </View>
           <ChevronRight size={18} color="#9CA3AF" />
         </TouchableOpacity>
 
-        {/* Analytics */}
         <TouchableOpacity
           onPress={() => navigation.navigate("Analytics")}
           className="flex-row items-center justify-between p-4 bg-gray-50 rounded-xl mb-3"
@@ -497,14 +460,11 @@ useEffect(() => {
         >
           <View className="flex-row items-center">
             <BarChart3 size={22} color="#3B82F6" />
-            <Text className="ml-3 font-medium text-gray-800">
-              Sales Analytics
-            </Text>
+            <Text className="ml-3 font-medium text-gray-800">Sales Analytics</Text>
           </View>
           <ChevronRight size={18} color="#9CA3AF" />
         </TouchableOpacity>
 
-        {/* Settings */}
         <TouchableOpacity
           onPress={() => navigation.navigate("Settings")}
           className="flex-row items-center justify-between p-4 bg-gray-50 rounded-xl"
@@ -512,9 +472,7 @@ useEffect(() => {
         >
           <View className="flex-row items-center">
             <Settings size={22} color="#6B7280" />
-            <Text className="ml-3 font-medium text-gray-800">
-              Settings
-            </Text>
+            <Text className="ml-3 font-medium text-gray-800">Settings</Text>
           </View>
           <ChevronRight size={18} color="#9CA3AF" />
         </TouchableOpacity>

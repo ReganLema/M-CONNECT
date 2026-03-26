@@ -11,14 +11,19 @@ class User extends Authenticatable implements JWTSubject
     use Notifiable;
 
     protected $fillable = [
-        'name',
-        'email',
-        'password',
-        'role',
-        'phone',
-        'refresh_token',
-        'refresh_token_expires_at'  // FIXED: matches database column
-    ];
+    'name',
+    'email',
+    'password',
+    'role',
+    'phone',
+    'refresh_token',
+    'refresh_token_expires_at',
+    'verification_otp',
+    'verification_otp_expires_at',
+    'email_verified_at',
+    'reset_password_otp',        
+    'reset_password_otp_expires_at' 
+];
 
     protected $hidden = [
         'password',
@@ -27,10 +32,12 @@ class User extends Authenticatable implements JWTSubject
         'refresh_token_expires_at'
     ];
 
-    protected $casts = [
-        'email_verified_at' => 'datetime',
-        'refresh_token_expires_at' => 'datetime',  // FIXED
-    ];
+   protected $casts = [
+    'email_verified_at' => 'datetime',
+    'refresh_token_expires_at' => 'datetime',
+    'verification_otp_expires_at' => 'datetime',
+     'reset_password_otp_expires_at' => 'datetime' 
+];
 
     public function getJWTIdentifier()
     {
@@ -46,11 +53,11 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
-    // Remove or fix these methods since they use wrong column name
+    // Methods for refresh token management
     public function updateRefreshToken($refreshToken)
     {
         $this->refresh_token = $refreshToken;
-        $this->refresh_token_expires_at = now()->addDays(30);  // FIXED
+        $this->refresh_token_expires_at = now()->addDays(30);  
         $this->save();
     }
 
@@ -58,11 +65,11 @@ class User extends Authenticatable implements JWTSubject
     {
         return $this->refresh_token === $token && 
                $this->refresh_token_expires_at && 
-               $this->refresh_token_expires_at->isFuture();  // FIXED
+               $this->refresh_token_expires_at->isFuture();  
     }
 
 
-    // Add this method to your User model
+   // Accessor for profile image URL 
 public function getProfileImageUrlAttribute()
 {
     if (!$this->profile_image) {

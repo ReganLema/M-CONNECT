@@ -1,5 +1,5 @@
-// src/screens/auth/RegisterScreen.tsx
-import React, { useState, useRef, useEffect } from "react";
+// src/screens/auth/ResetPasswordScreen.tsx
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -10,37 +10,29 @@ import {
   StatusBar,
   Platform,
   KeyboardAvoidingView,
-  Animated,
   ActivityIndicator,
+  Animated,
 } from "react-native";
-import { useNavigation, CommonActions } from "@react-navigation/native";
-import { useAuth } from "@/contexts/AuthContext";
-import { Role } from "@/api/auth";
-import { Eye, EyeOff, User, Mail, Lock, ChevronRight, ArrowLeft, Leaf, CheckCircle, AlertCircle } from "lucide-react-native";
+import { useNavigation, useRoute, CommonActions } from "@react-navigation/native";
+import { Lock, Eye, EyeOff, CheckCircle, ArrowLeft, Shield, KeyRound } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { resetPassword } from "@/api/auth";
 import { LinearGradient } from "expo-linear-gradient";
 
-const ROLES = [
-  { label: "👨‍🌾 Farmer – Sell farm products", value: "farmer", description: "Sell your fresh produce directly to buyers" },
-  { label: "🛒 Buyer – Buy farm products", value: "buyer", description: "Discover and purchase fresh farm products" },
-] as const;
-
-export default function RegisterScreen() {
+export default function ResetPasswordScreen() {
   const navigation = useNavigation<any>();
-  const { register } = useAuth();
-
+  const route = useRoute<any>();
+  
+  const { email, resetToken } = route.params || {};
+  
   const [form, setForm] = useState({
-    name: "",
-    email: "",
     password: "",
     confirmPassword: "",
-    role: "buyer" as Role,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordStrength, setPasswordStrength] = useState<{
     score: number;
     message: string;
@@ -74,25 +66,24 @@ export default function RegisterScreen() {
     ]).start();
   }, []);
 
-  const validateEmail = (email: string): boolean => {
-    if (!email.trim()) {
-      setEmailError("Email address is required");
-      return false;
+  useEffect(() => {
+    if (!email || !resetToken) {
+      Alert.alert("Error", "Invalid reset session", [
+        { text: "Go to Login", onPress: () => navigation.dispatch(
+          CommonActions.reset({
+            index: 0,
+            routes: [{ name: 'Login' }],
+          })
+        ) }
+      ]);
     }
-    if (!/\S+@\S+\.\S+/.test(email)) {
-      setEmailError("Enter a valid email address");
-      return false;
-    }
-    setEmailError(null);
-    return true;
-  };
+  }, [email, resetToken, navigation]);
 
   const checkPasswordStrength = (password: string) => {
     let score = 0;
     let message = "";
     let color = "#ef4444";
     
-    if (password.length >= 6) score++;
     if (password.length >= 8) score++;
     if (password.match(/[a-z]/)) score++;
     if (password.match(/[A-Z]/)) score++;
@@ -114,14 +105,13 @@ export default function RegisterScreen() {
   };
 
   const validateForm = () => {
-    if (!form.name.trim()) return "Full name is required";
-    if (!validateEmail(form.email)) return emailError || "Invalid email";
+    if (!form.password) return "Password is required";
     if (form.password.length < 6) return "Password must be at least 6 characters";
     if (form.password !== form.confirmPassword) return "Passwords do not match";
     return null;
   };
 
-  const handleRegisterPress = async () => {
+  const handleResetPassword = async () => {
     const error = validateForm();
     if (error) {
       Alert.alert("Validation Error", error);
@@ -129,53 +119,41 @@ export default function RegisterScreen() {
     }
 
     setLoading(true);
-
     try {
-      const response = await register(form.name, form.email, form.password, form.role);
-
-      console.log("✅ REGISTER RESPONSE:", response);
+      const response = await resetPassword(
+        email,
+        resetToken,
+        form.password,
+        form.confirmPassword
+      );
+      console.log("Reset password response:", response);
 
       if (response.status === "success") {
-        setForm({ 
-          name: "", 
-          email: "", 
-          password: "", 
-          confirmPassword: "", 
-          role: "buyer" 
-        });
-
-        if (response.requires_verification && response.email) {
-          console.log("🔍 Registration successful - navigating to OTP screen");
-          
-          setTimeout(() => {
-            navigation.navigate("OtpVerification", { 
-              email: response.email,
-              fromScreen: 'Register'
-            });
-          }, 100);
-        } else {
-          Alert.alert(
-            "Registration Successful! 🎉",
-            "Your account has been created. Please login to continue.",
-            [
-              {
-                text: "Go to Login",
-                onPress: () => navigation.navigate("Login"),
-              },
-            ]
-          );
-        }
-      } else {
         Alert.alert(
-          "Registration Failed", 
-          response.message || "Something went wrong. Try again."
+          "Success! 🎉",
+          "Your password has been reset successfully. Please login with your new password.",
+          [
+            {
+              text: "Go to Login",
+              onPress: () => {
+                navigation.dispatch(
+                  CommonActions.reset({
+                    index: 0,
+                    routes: [{ name: 'Login' }],
+                  })
+                );
+              }
+            }
+          ]
         );
+      } else {
+        Alert.alert("Error", response.message || "Failed to reset password");
       }
-    } catch (err: any) {
-      console.error("❌ REGISTER ERROR:", err);
+    } catch (error: any) {
+      console.error("Reset password error:", error);
       Alert.alert(
-        "Registration Failed", 
-        err.message || "Something went wrong. Try again."
+        "Error",
+        error.response?.data?.message || "Failed to reset password. Please try again."
       );
     } finally {
       setLoading(false);
@@ -204,8 +182,8 @@ export default function RegisterScreen() {
             }}
           >
             {/* Decorative Elements */}
-            <View className="absolute top-0 right-0 w-40 h-40 bg-emerald-50 rounded-full -mr-20 -mt-20" />
-            <View className="absolute bottom-0 left-0 w-60 h-60 bg-emerald-50 rounded-full -ml-30 -mb-30" />
+            <View className="absolute top-0 right-0 w-40 h-40 bg-orange-50 rounded-full -mr-20 -mt-20" />
+            <View className="absolute bottom-0 left-0 w-60 h-60 bg-orange-50 rounded-full -ml-30 -mb-30" />
             
             <View className="px-6 pt-8 pb-8">
               {/* Back Button */}
@@ -223,106 +201,56 @@ export default function RegisterScreen() {
                 style={{ transform: [{ scale: scaleAnim }] }}
               >
                 <LinearGradient
-                  colors={["#10b981", "#059669"]}
+                  colors={["#f97316", "#ea580c"]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   className="w-24 h-24 rounded-3xl items-center justify-center mb-6 shadow-lg"
-                  style={{ shadowColor: "#10b981", shadowOpacity: 0.3, shadowRadius: 15, shadowOffset: { width: 0, height: 5 } }}
+                  style={{ shadowColor: "#f97316", shadowOpacity: 0.3, shadowRadius: 15, shadowOffset: { width: 0, height: 5 } }}
                 >
-                  <Leaf size={40} color="#ffffff" />
+                  <KeyRound size={40} color="#ffffff" />
                 </LinearGradient>
                 
                 <Text className="text-3xl font-bold text-gray-900 mb-2">
-                  Create Account
+                  Create New Password
                 </Text>
                 <Text className="text-gray-500 text-center text-base px-6">
-                  Join thousands of farmers and buyers in our community
+                  Your new password must be different from previously used passwords.
                 </Text>
               </Animated.View>
 
+              {/* Security Tips Card */}
+              <View className="bg-orange-50 rounded-2xl p-4 mb-6 flex-row items-start">
+                <Shield size={20} color="#f97316" style={{ marginRight: 12, marginTop: 2 }} />
+                <View className="flex-1">
+                  <Text className="text-orange-700 font-semibold text-sm mb-1">
+                    Password Requirements
+                  </Text>
+                  <Text className="text-orange-600 text-xs">
+                    • At least 6 characters
+                  </Text>
+                  <Text className="text-orange-600 text-xs">
+                    • Mix of uppercase, lowercase, numbers, and symbols
+                  </Text>
+                </View>
+              </View>
+
               {/* Form */}
               <View className="space-y-5">
-                {/* Name Field */}
+                {/* New Password */}
                 <View>
                   <Text className="text-sm font-semibold text-gray-700 mb-2 ml-1">
-                    Full Name
-                  </Text>
-                  <View className={`relative rounded-2xl border-2 transition-all duration-200 ${
-                    focusedField === 'name' 
-                      ? 'border-emerald-500 bg-emerald-50/30' 
-                      : 'border-gray-200 bg-gray-50'
-                  }`}>
-                    <View className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-                      <User size={20} color={focusedField === 'name' ? "#10b981" : "#9CA3AF"} />
-                    </View>
-                    <TextInput
-                      placeholder="John Doe"
-                      value={form.name}
-                      onChangeText={(v) => setForm({ ...form, name: v })}
-                      onFocus={() => setFocusedField('name')}
-                      onBlur={() => setFocusedField(null)}
-                      className="pl-12 pr-4 py-4 text-gray-900 text-base"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                  </View>
-                </View>
-
-                {/* Email Field */}
-                <View>
-                  <Text className="text-sm font-semibold text-gray-700 mb-2 ml-1">
-                    Email Address
-                  </Text>
-                  <View className={`relative rounded-2xl border-2 transition-all duration-200 ${
-                    focusedField === 'email' 
-                      ? 'border-emerald-500 bg-emerald-50/30' 
-                      : emailError 
-                        ? 'border-red-400 bg-red-50/30'
-                        : 'border-gray-200 bg-gray-50'
-                  }`}>
-                    <View className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-                      <Mail size={20} color={focusedField === 'email' ? "#10b981" : emailError ? "#ef4444" : "#9CA3AF"} />
-                    </View>
-                    <TextInput
-                      placeholder="you@example.com"
-                      value={form.email}
-                      onChangeText={(v) => {
-                        setForm({ ...form, email: v });
-                        if (emailError) validateEmail(v);
-                      }}
-                      onFocus={() => setFocusedField('email')}
-                      onBlur={() => {
-                        setFocusedField(null);
-                        validateEmail(form.email);
-                      }}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      className="pl-12 pr-4 py-4 text-gray-900 text-base"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                  </View>
-                  {emailError && (
-                    <View className="flex-row items-center mt-2 ml-1">
-                      <AlertCircle size={12} color="#ef4444" />
-                      <Text className="text-red-500 text-xs ml-1">{emailError}</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Password Field */}
-                <View>
-                  <Text className="text-sm font-semibold text-gray-700 mb-2 ml-1">
-                    Password
+                    New Password
                   </Text>
                   <View className={`relative rounded-2xl border-2 transition-all duration-200 ${
                     focusedField === 'password' 
-                      ? 'border-emerald-500 bg-emerald-50/30' 
+                      ? 'border-orange-500 bg-orange-50/30' 
                       : 'border-gray-200 bg-gray-50'
                   }`}>
                     <View className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-                      <Lock size={20} color={focusedField === 'password' ? "#10b981" : "#9CA3AF"} />
+                      <Lock size={20} color={focusedField === 'password' ? "#f97316" : "#9CA3AF"} />
                     </View>
                     <TextInput
-                      placeholder="Minimum 6 characters"
+                      placeholder="Enter new password"
                       secureTextEntry={!showPassword}
                       value={form.password}
                       onChangeText={(text) => {
@@ -355,36 +283,39 @@ export default function RegisterScreen() {
                       <View className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                         <Animated.View 
                           style={{ 
-                            width: `${(passwordStrength.score / 6) * 100}%`,
+                            width: `${(passwordStrength.score / 5) * 100}%`,
                             backgroundColor: passwordStrength.color,
                           }}
                           className="h-full rounded-full"
                         />
                       </View>
+                      <Text className="text-xs text-gray-400 mt-2">
+                        Use at least 6 characters with letters, numbers, and symbols
+                      </Text>
                     </View>
                   )}
                 </View>
 
-                {/* Confirm Password Field */}
+                {/* Confirm Password */}
                 <View>
                   <Text className="text-sm font-semibold text-gray-700 mb-2 ml-1">
-                    Confirm Password
+                    Confirm New Password
                   </Text>
                   <View className={`relative rounded-2xl border-2 transition-all duration-200 ${
                     focusedField === 'confirmPassword' 
-                      ? 'border-emerald-500 bg-emerald-50/30' 
+                      ? 'border-orange-500 bg-orange-50/30' 
                       : form.confirmPassword.length > 0 && form.password !== form.confirmPassword
                         ? 'border-red-400 bg-red-50/30'
                         : 'border-gray-200 bg-gray-50'
                   }`}>
                     <View className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
                       <Lock size={20} color={
-                        focusedField === 'confirmPassword' ? "#10b981" : 
+                        focusedField === 'confirmPassword' ? "#f97316" : 
                         form.confirmPassword.length > 0 && form.password !== form.confirmPassword ? "#ef4444" : "#9CA3AF"
                       } />
                     </View>
                     <TextInput
-                      placeholder="Re-enter your password"
+                      placeholder="Confirm new password"
                       secureTextEntry={!showConfirmPassword}
                       value={form.confirmPassword}
                       onChangeText={(text) => setForm({ ...form, confirmPassword: text })}
@@ -421,62 +352,26 @@ export default function RegisterScreen() {
                   )}
                 </View>
 
-                {/* Role Selection */}
-                <View>
-                  <Text className="text-sm font-semibold text-gray-700 mb-3 ml-1">
-                    I want to join as
-                  </Text>
-                  <View className="space-y-3">
-                    {ROLES.map((r) => (
-                      <TouchableOpacity
-                        key={r.value}
-                        onPress={() => setForm({ ...form, role: r.value })}
-                        activeOpacity={0.7}
-                        className={`flex-row p-4 rounded-2xl border-2 ${
-                          form.role === r.value 
-                            ? "border-emerald-500 bg-emerald-50" 
-                            : "border-gray-200 bg-gray-50"
-                        }`}
-                      >
-                        <View
-                          className={`w-6 h-6 rounded-full border-2 mr-3 flex items-center justify-center mt-1 ${
-                            form.role === r.value ? "border-emerald-500 bg-emerald-500" : "border-gray-300"
-                          }`}
-                        >
-                          {form.role === r.value && <View className="w-3 h-3 rounded-full bg-white" />}
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-gray-800 font-semibold text-base">{r.label}</Text>
-                          <Text className="text-gray-500 text-xs mt-0.5">{r.description}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-
-                {/* Register Button */}
+                {/* Reset Button */}
                 <TouchableOpacity
-                  onPress={handleRegisterPress}
+                  onPress={handleResetPassword}
                   disabled={loading}
                   activeOpacity={0.9}
                   className="mt-4"
                 >
                   <LinearGradient
-                    colors={loading ? ["#9ca3af", "#6b7280"] : ["#10b981", "#059669"]}
+                    colors={loading ? ["#9ca3af", "#6b7280"] : ["#f97316", "#ea580c"]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     className="rounded-2xl py-4 flex-row items-center justify-center shadow-lg"
-                    style={{ shadowColor: "#10b981", shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}
+                    style={{ shadowColor: "#f97316", shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } }}
                   >
                     {loading ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <>
-                        <Text className="text-white font-semibold text-base mr-2">
-                          Create Account
-                        </Text>
-                        <ChevronRight size={20} color="#fff" />
-                      </>
+                      <Text className="text-white font-semibold text-base">
+                        Reset Password
+                      </Text>
                     )}
                   </LinearGradient>
                 </TouchableOpacity>
@@ -488,16 +383,16 @@ export default function RegisterScreen() {
                   <View className="flex-1 h-px bg-gray-200" />
                 </View>
 
-                {/* Login Link */}
+                {/* Back to Login */}
                 <View className="flex-row justify-center items-center py-2">
                   <Text className="text-gray-500 text-base mr-1">
-                    Already have an account?
+                    Remember your password?
                   </Text>
                   <TouchableOpacity 
                     onPress={() => navigation.navigate("Login")}
                     activeOpacity={0.7}
                   >
-                    <Text className="text-emerald-600 font-bold text-base">
+                    <Text className="text-orange-500 font-bold text-base">
                       Sign In
                     </Text>
                   </TouchableOpacity>

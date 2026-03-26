@@ -1,3 +1,4 @@
+
 // src/contexts/AuthContext.tsx
 import React, {
   createContext,
@@ -18,10 +19,6 @@ import {
   User as ApiUser,
 } from "@/api/auth";
 
-
-
-// Add this to your AuthContext.tsx, right after the imports
-
 const CDN_BASE_URL = 'https://pub-830fc031162b476396c6a260d2baec03.r2.dev';
 
 /* =====================
@@ -30,12 +27,10 @@ const CDN_BASE_URL = 'https://pub-830fc031162b476396c6a260d2baec03.r2.dev';
 const ensureFullAvatarUrl = (avatarUrl?: string): string | undefined => {
   if (!avatarUrl) return undefined;
   
-  // If it's already a full URL, return as is
   if (avatarUrl.startsWith('http')) {
     return avatarUrl;
   }
   
-  // If it's a local storage path, convert to CDN
   if (avatarUrl.includes('/storage/')) {
     const path = avatarUrl.split('/storage/').pop();
     if (path) {
@@ -43,19 +38,25 @@ const ensureFullAvatarUrl = (avatarUrl?: string): string | undefined => {
     }
   }
   
-  // If it's just a path without /storage/
   return `${CDN_BASE_URL}/${avatarUrl.replace(/^\/+/, '')}`;
 };
-
 
 /* =====================
    TYPES
 ===================== */
 export type User = ApiUser;
 
+export type RegisterResult = {
+  status: string;
+  message: string;
+  requires_verification?: boolean;
+  email?: string;
+};
+
 type AuthContextType = {
   user: User | null;
   loading: boolean;
+  pendingVerificationEmail: string | null;
   login: (
     email: string,
     password: string
@@ -65,11 +66,12 @@ type AuthContextType = {
     email: string,
     password: string,
     role: Role
-  ) => Promise<{ status: string; message: string }>;
+  ) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   refreshAuth: () => Promise<void>;
   updateAuthUser: (updates: Partial<User>) => void;
   isAuthenticated: boolean;
+  clearPendingVerification: () => Promise<void>; 
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -83,34 +85,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
 
-  // Add this RIGHT after your state declarations in AuthContext.tsx
-useEffect(() => {
-  const migrateStoredUser = async () => {
-    try {
-      const userJson = await AsyncStorage.getItem("user");
-      if (userJson) {
-        const parsedUser = JSON.parse(userJson);
-        // Force migration to CDN URL
-        if (parsedUser?.avatar && !parsedUser.avatar.includes('r2.dev')) {
-          const path = parsedUser.avatar.split('/storage/').pop();
-          const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
-          console.log('🔄 MIGRATING user to CDN:', {
-            from: parsedUser.avatar,
-            to: cdnUrl
-          });
-          parsedUser.avatar = cdnUrl;
-          await AsyncStorage.setItem("user", JSON.stringify(parsedUser));
-          setUser(parsedUser);
+  // Migrate stored user to CDN
+  useEffect(() => {
+    const migrateStoredUser = async () => {
+      try {
+        const userJson = await AsyncStorage.getItem("user");
+        if (userJson) {
+          const parsedUser = JSON.parse(userJson);
+          if (parsedUser?.avatar && !parsedUser.avatar.includes('r2.dev')) {
+            const path = parsedUser.avatar.split('/storage/').pop();
+            const cdnUrl = `https://pub-830fc031162b476396c6a260d2baec03.r2.dev/${path}`;
+            console.log('🔄 MIGRATING user to CDN:', {
+              from: parsedUser.avatar,
+              to: cdnUrl
+            });
+            parsedUser.avatar = cdnUrl;
+            await AsyncStorage.setItem("user", JSON.stringify(parsedUser));
+            setUser(parsedUser);
+          }
         }
+      } catch (error) {
+        console.error('Migration error:', error);
       }
-    } catch (error) {
-      console.error('Migration error:', error);
-    }
-  };
-  
-  migrateStoredUser();
-}, []);
+    };
+    
+    migrateStoredUser();
+  }, []);
 
   /* =====================
      CLEAR STORAGE
@@ -121,99 +123,125 @@ useEffect(() => {
         "accessToken",
         "refreshToken",
         "user",
+        "pendingVerificationEmail",
       ]);
       setUser(null);
+      setPendingVerificationEmail(null);
     } catch (error) {
       console.error("Error clearing storage:", error);
     }
   };
 
- /* =====================
-   FETCH FRESH USER DATA - FIXED
-===================== */
-const fetchFreshUserData = useCallback(async (): Promise<User | null> => {
-  try {
-    const accessToken = await AsyncStorage.getItem("accessToken");
-    if (!accessToken) {
-      console.log("No access token found");
-      return null;
+  /* =====================
+     CLEAR PENDING VERIFICATION 
+  ===================== */
+  const clearPendingVerification = async () => {
+    try {
+      console.log("Clearing pending verification email");
+      await AsyncStorage.removeItem("pendingVerificationEmail");
+      setPendingVerificationEmail(null);
+    } catch (error) {
+      console.error("Error clearing pending verification:", error);
     }
-
-    console.log("Fetching fresh user data from server...");
-    const freshUser = await getCurrentUser();
-    
-    // Ensure avatar is full CDN URL
-    if (freshUser.avatar) {
-      freshUser.avatar = ensureFullAvatarUrl(freshUser.avatar);
-    }
-    
-    console.log("Fresh user data fetched:", {
-      id: freshUser.id,
-      email: freshUser.email,
-      avatar: freshUser.avatar ? "present" : "missing",
-      avatarUrl: freshUser.avatar?.substring(0, 50)
-    });
-    
-    if (freshUser) {
-      await AsyncStorage.setItem("user", JSON.stringify(freshUser));
-      return freshUser;
-    }
-  } catch (error: any) {
-    console.warn("Failed to fetch fresh user data:", error.message);
-  }
-  return null;
-}, []);
+  };
 
   /* =====================
-   LOAD USER FROM STORAGE - FIXED
-===================== */
-const loadUserFromStorage = useCallback(async () => {
-  try {
-    const [userJson, accessToken] = await Promise.all([
-      AsyncStorage.getItem("user"),
-      AsyncStorage.getItem("accessToken"),
-    ]);
-
-    if (userJson && accessToken) {
-      console.log("Found stored user data, attempting to refresh...");
-      
-      try {
-        const freshUser = await fetchFreshUserData();
-        if (freshUser) {
-          setUser(freshUser);
-          console.log("Using fresh user data from server");
-        } else {
-          throw new Error("Could not fetch fresh data");
-        }
-      } catch (freshError) {
-        console.log("Using stored user data (fallback)");
-        const parsedUser: User = JSON.parse(userJson);
-        
-        // ✅ FIXED: Ensure avatar is CDN URL even in fallback
-        if (parsedUser?.id && parsedUser?.email && parsedUser?.role) {
-          // Convert any local avatar URL to CDN
-          if (parsedUser.avatar && !parsedUser.avatar.includes('r2.dev')) {
-            parsedUser.avatar = ensureFullAvatarUrl(parsedUser.avatar);
-            console.log('🔄 Converted stored avatar to CDN:', parsedUser.avatar);
-          }
-          setUser(parsedUser);
-        } else {
-          console.log("Invalid stored user data");
-          await clearStorage();
-        }
+     FETCH FRESH USER DATA
+  ===================== */
+  const fetchFreshUserData = useCallback(async (): Promise<User | null> => {
+    try {
+      const accessToken = await AsyncStorage.getItem("accessToken");
+      if (!accessToken) {
+        console.log("No access token found");
+        return null;
       }
-    } else {
-      console.log("No stored user data found");
-      setUser(null);
+
+      console.log("Fetching fresh user data from server...");
+      const freshUser = await getCurrentUser();
+      
+      if (freshUser.avatar) {
+        freshUser.avatar = ensureFullAvatarUrl(freshUser.avatar);
+      }
+      
+      console.log("Fresh user data fetched:", {
+        id: freshUser.id,
+        email: freshUser.email,
+        email_verified: freshUser.email_verified,
+        avatar: freshUser.avatar ? "present" : "missing",
+      });
+      
+      if (freshUser) {
+        await AsyncStorage.setItem("user", JSON.stringify(freshUser));
+        return freshUser;
+      }
+    } catch (error: any) {
+      console.warn("Failed to fetch fresh user data:", error.message);
     }
-  } catch (err) {
-    console.error("Error loading user from storage:", err);
-    await clearStorage();
-  } finally {
-    setLoading(false);
-    setInitialLoad(false);
-  }
-}, [fetchFreshUserData]);
+    return null;
+  }, []);
+
+  /* =====================
+     LOAD USER FROM STORAGE - ADD PENDING EMAIL CHECK
+  ===================== */
+  const loadUserFromStorage = useCallback(async () => {
+    try {
+      const [userJson, accessToken, pendingEmail] = await Promise.all([
+        AsyncStorage.getItem("user"),
+        AsyncStorage.getItem("accessToken"),
+        AsyncStorage.getItem("pendingVerificationEmail"),
+      ]);
+
+      //Check for pending verification email
+      if (pendingEmail) {
+        console.log("Found pending verification email:", pendingEmail);
+        setPendingVerificationEmail(pendingEmail);
+      }
+
+      if (userJson && accessToken) {
+        console.log("Found stored user data, attempting to refresh...");
+        
+        try {
+          const freshUser = await fetchFreshUserData();
+          if (freshUser) {
+            setUser(freshUser);
+            console.log("Using fresh user data from server");
+            
+            //If user is verified, clear pending verification email
+            if (freshUser.email_verified && pendingEmail) {
+              console.log("✅ User is verified, clearing pending verification email");
+              await AsyncStorage.removeItem("pendingVerificationEmail");
+              setPendingVerificationEmail(null);
+            }
+          } else {
+            throw new Error("Could not fetch fresh data");
+          }
+        } catch (freshError) {
+          console.log("Using stored user data (fallback)");
+          const parsedUser: User = JSON.parse(userJson);
+          
+          if (parsedUser?.id && parsedUser?.email && parsedUser?.role) {
+            if (parsedUser.avatar && !parsedUser.avatar.includes('r2.dev')) {
+              parsedUser.avatar = ensureFullAvatarUrl(parsedUser.avatar);
+              console.log('🔄 Converted stored avatar to CDN:', parsedUser.avatar);
+            }
+            setUser(parsedUser);
+          } else {
+            console.log("Invalid stored user data");
+            await clearStorage();
+          }
+        }
+      } else {
+        console.log("No stored user data found");
+        setUser(null);
+      }
+    } catch (err) {
+      console.error("Error loading user from storage:", err);
+      await clearStorage();
+    } finally {
+      setLoading(false);
+      setInitialLoad(false);
+    }
+  }, [fetchFreshUserData]);
 
   /* =====================
      INITIAL LOAD
@@ -221,9 +249,76 @@ const loadUserFromStorage = useCallback(async () => {
   useEffect(() => {
     loadUserFromStorage();
   }, [loadUserFromStorage]);
-/* =====================
-   LOGIN - FIXED
-===================== */
+
+  /* =====================
+     REGISTER - WITH PENDING VERIFICATION
+  ===================== */
+  const register = async (
+  name: string,
+  email: string,
+  password: string,
+  role: Role
+) => {
+  try {
+    // setLoading(true)
+    console.log("AuthContext: Attempting registration for", email);
+
+    const response: AuthResponse = await apiRegister({
+      name,
+      email,
+      password,
+      role,
+    });
+
+    console.log("AuthContext register response:", {
+      status: response.status,
+      requires_verification: response.requires_verification,
+      email: response.user?.email,
+    });
+
+    if (response.requires_verification) {
+      console.log("Email verification required");
+      
+      await AsyncStorage.setItem("pendingVerificationEmail", email);
+      setPendingVerificationEmail(email);
+      
+      return {
+        status: "success",
+        message: response.message || "Registration successful. Please verify your email.",
+        requires_verification: true,
+        email: email,
+      };
+    }
+
+    console.log("No verification required - auto-logging in");
+    
+    await AsyncStorage.multiSet([
+      ["accessToken", response.accessToken],
+      ["refreshToken", response.refreshToken],
+    ]);
+
+    let userToStore = response.user;
+    if (userToStore.avatar && !userToStore.avatar.includes('r2.dev')) {
+      userToStore.avatar = ensureFullAvatarUrl(userToStore.avatar);
+    }
+    
+    await AsyncStorage.setItem("user", JSON.stringify(userToStore));
+    setUser(userToStore);
+    
+    return {
+      status: "success",
+      message: response.message || "Registration successful",
+      requires_verification: false,
+    };
+  } catch (err: any) {
+    console.error("AuthContext register error:", err.message);
+    throw new Error(err.message || "Registration failed");
+  }
+  
+};
+  /* =====================
+     LOGIN - FIXED WITH PROPER ERROR HANDLING
+  ===================== */
 const login = async (email: string, password: string) => {
   try {
     setLoading(true);
@@ -243,12 +338,10 @@ const login = async (email: string, password: string) => {
       ["refreshToken", response.refreshToken],
     ]);
 
-    // ✅ FIXED: Ensure response user avatar is CDN URL
     if (response.user.avatar && !response.user.avatar.includes('r2.dev')) {
       response.user.avatar = ensureFullAvatarUrl(response.user.avatar);
     }
 
-    // Get fresh user data with avatar
     let userToStore = response.user;
     try {
       const freshUser = await fetchFreshUserData();
@@ -260,9 +353,11 @@ const login = async (email: string, password: string) => {
       console.warn("Could not fetch fresh data, using response data");
     }
     
-    // Store user data
     await AsyncStorage.setItem("user", JSON.stringify(userToStore));
     setUser(userToStore);
+    
+    // ✅ Clear pending verification ONLY on successful login
+    await clearPendingVerification();
     
     console.log("User stored after login:", {
       ...userToStore,
@@ -274,71 +369,39 @@ const login = async (email: string, password: string) => {
       message: response.message || "Login successful",
     };
   } catch (err: any) {
-    console.error("AuthContext login error:", err.message);
-    throw new Error(err.message || "Login failed");
+    console.error("AuthContext login error:", err);
+    
+    // ✅ Check if this is a verification required error
+    const isVerificationRequired = err.response?.data?.requires_verification === true;
+    
+    if (isVerificationRequired) {
+      // ✅ Keep pending verification email for redirect to OTP
+      console.log("Email verification required - keeping pending email");
+      throw new Error("Please verify your email before logging in");
+    } else {
+      // ✅ CRITICAL: DO NOT clear pending verification on wrong password
+      // This prevents any navigation changes on login failure
+      console.log("Login failed - showing error only, staying on login screen");
+      
+      // Extract meaningful error message
+      let errorMessage = "Invalid email or password. Please try again.";
+      
+      if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      // ✅ Just throw error, don't modify any state
+      throw new Error(errorMessage);
+    }
   } finally {
     setLoading(false);
   }
 };
-  /* =====================
-     REGISTER
-  ===================== */
-  const register = async (
-    name: string,
-    email: string,
-    password: string,
-    role: Role
-  ) => {
-    try {
-      setLoading(true);
-      console.log("AuthContext: Attempting registration for", email);
-
-      const response: AuthResponse = await apiRegister({
-        name,
-        email,
-        password,
-        role,
-      });
-
-      console.log("AuthContext register success:", {
-        user: response.user.email,
-        role: response.user.role,
-      });
-
-      // Store tokens
-      await AsyncStorage.multiSet([
-        ["accessToken", response.accessToken],
-        ["refreshToken", response.refreshToken],
-      ]);
-
-      let userToStore = response.user;
-      try {
-        const freshUser = await fetchFreshUserData();
-        if (freshUser) {
-          userToStore = freshUser;
-          console.log("Using fresh user data from server");
-        }
-      } catch (freshError) {
-        console.warn("Could not fetch fresh data, using response data");
-      }
-      
-      await AsyncStorage.setItem("user", JSON.stringify(userToStore));
-      setUser(userToStore);
-      
-      return {
-        status: "success",
-        message: response.message || "Registration successful",
-      };
-    } catch (err: any) {
-      console.error("AuthContext register error:", err.message);
-      throw new Error(err.message || "Registration failed");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   /* =====================
-     LOGOUT
+     LOGOUT - CLEAR PENDING VERIFICATION
   ===================== */
   const logout = async () => {
     try {
@@ -355,15 +418,24 @@ const login = async (email: string, password: string) => {
   };
 
   /* =====================
-     REFRESH AUTH STATE
+     REFRESH AUTH STATE - IMPROVED
   ===================== */
   const refreshAuth = async () => {
     try {
       console.log("Refreshing auth state...");
       const freshUser = await fetchFreshUserData();
+      
       if (freshUser) {
         setUser(freshUser);
         console.log("Auth refreshed with fresh data");
+        
+        //  Check if we have a pending verification email and the user is now verified
+        const pendingEmail = await AsyncStorage.getItem("pendingVerificationEmail");
+        
+        if (pendingEmail && freshUser.email_verified === true) {
+          console.log("✅ User is verified, clearing pending verification email");
+          await clearPendingVerification();
+        }
       } else {
         console.log("No fresh data available");
       }
@@ -372,49 +444,49 @@ const login = async (email: string, password: string) => {
     }
   };
 
-/* =====================
-   UPDATE AUTH USER - FIXED
-===================== */
-const updateAuthUser = (updates: Partial<User>) => {
-  setUser(prev => {
-    if (!prev) return prev;
-    
-    // Ensure avatar is full CDN URL
-    let processedUpdates = { ...updates };
-    if (updates.avatar) {
-      processedUpdates.avatar = ensureFullAvatarUrl(updates.avatar);
-      console.log('🔄 Converting avatar to CDN URL:', processedUpdates.avatar);
-    }
-    
-    const updated = { ...prev, ...processedUpdates };
-    console.log("Updating auth user locally:", {
-      ...processedUpdates,
-      avatar: processedUpdates.avatar ? '✅ set' : 'no change'
+  /* =====================
+     UPDATE AUTH USER
+  ===================== */
+  const updateAuthUser = (updates: Partial<User>) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      
+      let processedUpdates = { ...updates };
+      if (updates.avatar) {
+        processedUpdates.avatar = ensureFullAvatarUrl(updates.avatar);
+        console.log('🔄 Converting avatar to CDN URL:', processedUpdates.avatar);
+      }
+      
+      const updated = { ...prev, ...processedUpdates };
+      console.log("Updating auth user locally:", {
+        ...processedUpdates,
+        avatar: processedUpdates.avatar ? '✅ set' : 'no change'
+      });
+      
+      AsyncStorage.setItem("user", JSON.stringify(updated))
+        .catch(err => console.error("Error saving user to storage:", err));
+      
+      return updated;
     });
-    
-    // Store in AsyncStorage
-    AsyncStorage.setItem("user", JSON.stringify(updated))
-      .catch(err => console.error("Error saving user to storage:", err));
-    
-    return updated;
-  });
-};
+  };
 
   /* =====================
      IS AUTHENTICATED
   ===================== */
-  const isAuthenticated = !!user?.id && !!user?.email;
+  const isAuthenticated = !!user?.id && !!user?.email && user?.email_verified === true;
 
   return (
     <AuthContext.Provider value={{ 
       user, 
-      loading: loading || initialLoad, 
+      loading: loading || initialLoad,
+      pendingVerificationEmail,
       login, 
       register, 
       logout,
       refreshAuth,
       updateAuthUser,
-      isAuthenticated
+      isAuthenticated,
+      clearPendingVerification, 
     }}>
       {children}
     </AuthContext.Provider>

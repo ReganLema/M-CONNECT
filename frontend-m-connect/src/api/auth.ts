@@ -19,15 +19,16 @@ export type LoginPayload = {
   password: string;
 };
 
-//  Update User type to match Laravel response
+// Update User type to match Laravel response
 export type User = {
   id: number;
   name: string;
   email: string;
   role: Role;
-  avatar?: string; // Make avatar optional string
+  avatar?: string;
   phone?: string;
   location?: string;
+  email_verified?: boolean;  
   created_at?: string;
   updated_at?: string;
 };
@@ -40,6 +41,7 @@ export type AuthResponse = {
   refreshToken: string;
   token_type: string;
   expires_in: number;
+  requires_verification?: boolean;
 };
 
 /* =======================
@@ -100,7 +102,7 @@ const parseAndValidateResponse = (
     }
   }
 
-  //  FIXED: Include avatar from response if available
+  // ✅ FIXED: Include all fields including email_verified and requires_verification
   return {
     status: data.status || 'success',
     message: data.message || `${context.charAt(0).toUpperCase() + context.slice(1)} successful`,
@@ -109,14 +111,18 @@ const parseAndValidateResponse = (
       name: String(user.name),
       email: String(user.email),
       role: user.role as Role,
-      avatar: user.avatar || undefined, // ✅ Include avatar
+      avatar: user.avatar || undefined,
       phone: user.phone || undefined,
       location: user.location || undefined,
+      email_verified: user.email_verified || false,  
+      created_at: user.created_at,
+      updated_at: user.updated_at,
     },
     accessToken: String(data.accessToken || data.token || ''),
     refreshToken: String(data.refreshToken || ''),
     token_type: String(data.token_type || 'bearer'),
     expires_in: Number(data.expires_in || 3600),
+    requires_verification: data.requires_verification || false, 
   };
 };
 
@@ -195,6 +201,14 @@ export const login = async (
     if (error.response?.data) {
       const errorData = error.response.data;
       
+      // Check if it's an email verification error
+      if (errorData.requires_verification) {
+        throw {
+          message: errorData.message || "Please verify your email",
+          response: { data: errorData }
+        };
+      }
+      
       if (errorData.error) {
         errorMessage = errorData.error;
       } else if (errorData.message) {
@@ -235,20 +249,25 @@ export const getCurrentUser = async (): Promise<User> => {
     if (response.data?.status === 'success' && response.data?.user) {
       const userData = response.data.user;
       
-      //  FIXED: Ensure avatar is included
+      // ✅ FIXED: Include email_verified
       const user: User = {
         id: userData.id,
         name: userData.name,
         email: userData.email,
         role: userData.role as Role,
-        avatar: userData.avatar || undefined, // ✅ Include avatar
+        avatar: userData.avatar || undefined,
         phone: userData.phone || undefined,
         location: userData.location || undefined,
+        email_verified: userData.email_verified || false, 
         created_at: userData.created_at,
         updated_at: userData.updated_at,
       };
       
-      console.log("Parsed user data:", user);
+      console.log("Parsed user data:", {
+        ...user,
+        email_verified: user.email_verified
+      });
+      
       return user;
     }
     
@@ -276,8 +295,31 @@ export const refreshToken = async (): Promise<{ accessToken: string; refreshToke
   }
 };
 
+/* =======================
+   VERIFY OTP
+======================= */
+export const verifyOtp = async (email: string, otp: string) => {
+  try {
+    const response = await API.post("/auth/verify-otp", { email, otp });
+    return response.data;
+  } catch (error: any) {
+    console.error("Verify OTP error:", error);
+    throw error;
+  }
+};
 
-
+/* =======================
+   RESEND OTP
+======================= */
+export const resendOtp = async (email: string) => {
+  try {
+    const response = await API.post("/auth/resend-otp", { email });
+    return response.data;
+  } catch (error: any) {
+    console.error("Resend OTP error:", error);
+    throw error;
+  }
+};
 
 /* =======================
    CHANGE PASSWORD - FIXED
@@ -285,14 +327,14 @@ export const refreshToken = async (): Promise<{ accessToken: string; refreshToke
 export const changePassword = async (data: {
   oldPassword: string;
   newPassword: string;
-  newPassword_confirmation?: string; // Add this for confirmation
+  newPassword_confirmation?: string;
 }) => {
   try {
     // Format data for Laravel validation
     const requestData = {
       oldPassword: data.oldPassword,
       newPassword: data.newPassword,
-      newPassword_confirmation: data.newPassword_confirmation || data.newPassword, // Add confirmation field
+      newPassword_confirmation: data.newPassword_confirmation || data.newPassword,
     };
 
     console.log("Changing password...", { 
@@ -328,7 +370,6 @@ export const changePassword = async (data: {
       if (errorData.message) {
         errorMessage = errorData.message;
       } else if (errorData.errors) {
-        // Extract all validation errors
         const errors = errorData.errors;
         const errorMessages: string[] = [];
         
@@ -355,3 +396,72 @@ export const changePassword = async (data: {
 };
 
 
+
+
+
+
+
+
+
+
+/* =======================
+   FORGOT PASSWORD
+======================= */
+export const forgotPassword = async (email: string) => {
+  try {
+    const response = await API.post("/auth/forgot-password", { email });
+    return response.data;
+  } catch (error: any) {
+    console.error("Forgot password error:", error);
+    throw error;
+  }
+};
+
+/* =======================
+   VERIFY RESET OTP
+======================= */
+export const verifyResetOtp = async (email: string, otp: string) => {
+  try {
+    const response = await API.post("/auth/verify-reset-otp", { email, otp });
+    return response.data;
+  } catch (error: any) {
+    console.error("Verify reset OTP error:", error);
+    throw error;
+  }
+};
+
+/* =======================
+   RESET PASSWORD
+======================= */
+export const resetPassword = async (
+  email: string,
+  resetToken: string,
+  password: string,
+  passwordConfirmation: string
+) => {
+  try {
+    const response = await API.post("/auth/reset-password", {
+      email,
+      reset_token: resetToken,
+      password,
+      password_confirmation: passwordConfirmation
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Reset password error:", error);
+    throw error;
+  }
+};
+
+/* =======================
+   RESEND OTP (for password reset)
+======================= */
+export const resendResetOtp = async (email: string) => {
+  try {
+    const response = await API.post("/auth/forgot-password", { email });
+    return response.data;
+  } catch (error: any) {
+    console.error("Resend reset OTP error:", error);
+    throw error;
+  }
+};

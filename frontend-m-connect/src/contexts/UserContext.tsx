@@ -193,12 +193,14 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.log("User data refreshed successfully");
         
         // Also sync with auth context
+       if (updateAuthUser) {
         updateAuthUser({
           avatar: freshData.avatar,
           name: freshData.name,
           phone: freshData.phone,
           location: freshData.location,
-        });
+  });
+}
       }
     } catch (error) {
       console.error("Failed to refresh user data:", error);

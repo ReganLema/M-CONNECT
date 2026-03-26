@@ -1,6 +1,4 @@
 
-
-
 // src/api/api.ts
 
 import axios, { AxiosInstance, AxiosResponse } from "axios";
@@ -8,8 +6,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // DEVELOPMENT: Use your computer's IP
 const BASE_URL = __DEV__
-  ? "http://192.168.0.196:8000/api"
-  : "https://yourdomain.com/api";
+  ? "http://192.168.0.200:8000/api"
+  : "m-connect-production.up.railway.app";//neglect this for now is for production
 
 const API: AxiosInstance = axios.create({
   baseURL: BASE_URL,
@@ -74,7 +72,7 @@ API.interceptors.response.use(
     //  NETWORK ERROR
     if (!error.response) {
       return Promise.reject(
-        new Error("Cannot connect to server. Check IP, Wi-Fi, and backend.")
+        new Error("Cannot connect to server. Check your internet connection or incorrect data.")
       );
     }
 
@@ -106,7 +104,7 @@ API.interceptors.response.use(
         console.log("Token refresh failed:", refreshError);
         await AsyncStorage.clear();
         return Promise.reject(
-          new Error("Session expired. Please login again.")
+          new Error("Wrong email or password. Please login again.")
         );
       }
     }

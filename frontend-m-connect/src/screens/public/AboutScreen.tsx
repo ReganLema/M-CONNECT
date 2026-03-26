@@ -165,7 +165,7 @@ export default function AboutScreen() {
             <TouchableOpacity
               className="py-4 bg-white rounded-2xl items-center"
               activeOpacity={0.8}
-              onPress={() => navigation.navigate('Contact' as never)}
+              //onPress={() => navigation.navigate('Contact' as never)}
             >
               <Text className="text-emerald-700 font-bold text-lg">
                 Contact Us

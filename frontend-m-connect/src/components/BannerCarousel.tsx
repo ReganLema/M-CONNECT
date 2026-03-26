@@ -4,13 +4,20 @@ import {
   View,
   Text,
   Image,
-  ScrollView,
   Dimensions,
   TouchableOpacity,
   ActivityIndicator,
-  FlatList,
 } from 'react-native';
-import { fetchMultipleImages, fetchImage } from '@/services/imageService';
+import Animated, {
+  useSharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  withTiming,
+  interpolate,
+  Extrapolate,
+  runOnJS,
+} from 'react-native-reanimated';
+import { fetchMultipleImages } from '@/services/imageService';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -49,8 +56,51 @@ export default function BannerCarousel() {
   const [banners, setBanners] = useState(localBanners);
   const [loading, setLoading] = useState(true);
   const [imageSources, setImageSources] = useState<Record<string, string>>({});
-  const scrollViewRef = useRef<ScrollView>(null);
+  
+  // ✅ Use Reanimated shared values
+  const scrollX = useSharedValue(0);
+  const scrollViewRef = useRef<Animated.ScrollView>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ✅ Animated scroll handler
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollX.value = event.contentOffset.x;
+    },
+    onMomentumEnd: (event) => {
+      const newIndex = Math.round(event.contentOffset.x / width);
+      if (newIndex !== currentIndex) {
+        runOnJS(setCurrentIndex)(newIndex);
+      }
+    },
+  });
+
+  // ✅ Create animated styles for all dots at once (fixes the hook order issue)
+  const dotAnimatedStyles = banners.map((_, index) => {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useAnimatedStyle(() => {
+      const inputRange = [(index - 1) * width, index * width, (index + 1) * width];
+      
+      const opacity = interpolate(
+        scrollX.value,
+        inputRange,
+        [0.5, 1, 0.5],
+        Extrapolate.CLAMP
+      );
+      
+      const scale = interpolate(
+        scrollX.value,
+        inputRange,
+        [0.8, 1.2, 0.8],
+        Extrapolate.CLAMP
+      );
+      
+      return {
+        opacity: withTiming(opacity, { duration: 200 }),
+        transform: [{ scale: withTiming(scale, { duration: 200 }) }],
+      };
+    });
+  });
 
   // Fetch dynamic banners on mount
   useEffect(() => {
@@ -68,18 +118,16 @@ export default function BannerCarousel() {
         const bannerImages = await fetchMultipleImages(bannerQueries);
         setImageSources(bannerImages);
         
-        // Update banners with fetched images
         const updatedBanners = localBanners.map((banner, index) => ({
           ...banner,
           image: bannerImages[`banner${index + 1}`] || banner.image
         }));
         
         setBanners(updatedBanners);
-        console.log(' Banners fetched successfully');
+        console.log('✅ Banners fetched successfully');
         
       } catch (error) {
         console.log('⚠️ Using default banners due to fetch error:', error);
-        // Keep default banners
       } finally {
         setLoading(false);
       }
@@ -87,7 +135,6 @@ export default function BannerCarousel() {
 
     fetchBanners();
 
-    // Cleanup function
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -115,14 +162,6 @@ export default function BannerCarousel() {
     };
   }, [banners.length, currentIndex]);
 
-  const handleScroll = (event: any) => {
-    const contentOffsetX = event.nativeEvent.contentOffset.x;
-    const newIndex = Math.round(contentOffsetX / width);
-    if (newIndex !== currentIndex) {
-      setCurrentIndex(newIndex);
-    }
-  };
-
   const handleDotPress = (index: number) => {
     setCurrentIndex(index);
     scrollViewRef.current?.scrollTo({
@@ -140,10 +179,12 @@ export default function BannerCarousel() {
           className="mx-1"
           activeOpacity={0.7}
         >
-          <View
-            className={`w-2.5 h-2.5 rounded-full ${
-              index === currentIndex ? 'bg-white' : 'bg-white/50'
-            }`}
+          <Animated.View
+            className="w-2.5 h-2.5 rounded-full bg-white"
+            style={[
+              dotAnimatedStyles[index],
+              { opacity: index === currentIndex ? 1 : 0.5 }
+            ]}
           />
         </TouchableOpacity>
       ))}
@@ -177,16 +218,16 @@ export default function BannerCarousel() {
 
   return (
     <View className="relative">
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollViewRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        onScroll={handleScroll}
+        onScroll={scrollHandler}
         scrollEventThrottle={16}
         className="rounded-2xl mx-4 overflow-hidden shadow-lg"
       >
-        {banners.map((banner) => (
+        {banners.map((banner, index) => (
           <View key={banner.id} style={{ width: width - 32 }}>
             <View className="relative h-48 overflow-hidden">
               <Image
@@ -222,11 +263,10 @@ export default function BannerCarousel() {
             </View>
           </View>
         ))}
-      </ScrollView>
+      </Animated.ScrollView>
       
       {renderDots()}
       
-      {/* Info badge */}
       <View className="absolute top-2 left-6 bg-emerald-600/90 px-3 py-1 rounded-full">
         <Text className="text-white text-xs font-bold">Sponsored</Text>
       </View>

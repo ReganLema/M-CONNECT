@@ -22,17 +22,17 @@ export default function App() {
   //useNotifications();
   return (
     <SettingsProvider>
-      <UserProvider>   
+      <AuthProvider>   
         {/* Use proper JSX component syntax */}
-        <AuthProvider> 
+        <UserProvider> 
           <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
-              <AppNavigator /> {/* Uses AuthContext to decide which stack */}
+              <AppNavigator /> 
               <StatusBar style="auto" />
             </SafeAreaProvider>
           </GestureHandlerRootView>
-        </AuthProvider>
-      </UserProvider>
+        </UserProvider>
+      </AuthProvider>
     </SettingsProvider>
   );
 }
