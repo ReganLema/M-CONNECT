@@ -694,7 +694,10 @@ export default function ProductDetailsScreen({ route, navigation }: Props) {
                       activeOpacity={0.7}
                       onPress={() => {
                         setFarmerModalVisible(false);
-                        setProductsModalVisible(true);
+                        navigation.getParent()?.navigate("Market", { 
+                          farmer: getFarmerName(),
+                          farmerId: product.farmer_id || product.user_id
+                        });
                       }}
                     >
                       <ShoppingBag size={20} color="#FFF" style={{ marginRight: 8 }} />

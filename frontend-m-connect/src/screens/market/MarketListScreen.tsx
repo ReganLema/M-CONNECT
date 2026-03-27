@@ -36,10 +36,10 @@ export default function MarketListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const underlineAnim = useRef(new Animated.Value(0)).current;
+const underlineAnim = useRef(new Animated.Value(0)).current;
 
-  //  Fetch products (UNCHANGED)
-  const fetchProducts = async () => {
+//  Fetch products (UNCHANGED)
+const fetchProducts = async () => {
     try {
       setError(null);
 

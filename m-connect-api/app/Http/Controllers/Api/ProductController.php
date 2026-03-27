@@ -31,43 +31,36 @@ class ProductController extends Controller
         return Storage::disk(config('filesystems.default'));
     }
 
-    /**
-     * Generate URL for file path
-     */
-    private function getFileUrl($path)
-    {
-        if (!$path) {
-            return null;
-        }
-
-        try {
-            $disk = config('filesystems.default');
-            
-            // For R2 disk
-            if ($disk === 'r2') {
-                $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
-                return $baseUrl . '/' . ltrim($path, '/');
-            }
-            
-            // For local public disk
-            if ($disk === 'public') {
-                return asset('storage/' . ltrim($path, '/'));
-            }
-            
-            // For S3 or other disks, try to use the URL from config
-            $diskConfig = config("filesystems.disks.{$disk}");
-            if (isset($diskConfig['url'])) {
-                $baseUrl = rtrim($diskConfig['url'], '/');
-                return $baseUrl . '/' . ltrim($path, '/');
-            }
-            
-            // Fallback
-            return null;
-        } catch (\Exception $e) {
-            Log::error('Error generating file URL: ' . $e->getMessage());
-            return null;
-        }
+   // In ProductController.php, in the getFileUrl method
+private function getFileUrl($path)
+{
+    if (!$path) {
+        return null;
     }
+
+    try {
+        $disk = config('filesystems.default');
+        
+        // Remove leading slash if present
+        $path = ltrim($path, '/');
+        
+        // For R2 disk
+        if ($disk === 'r2') {
+            $baseUrl = rtrim(env('R2_PUBLIC_URL'), '/');
+            return $baseUrl . '/' . $path;
+        }
+        
+        // For local public disk
+        if ($disk === 'public') {
+            return asset('storage/' . $path);
+        }
+        
+        return null;
+    } catch (\Exception $e) {
+        Log::error('Error generating file URL: ' . $e->getMessage());
+        return null;
+    }
+}
 
     /**
      * Display a listing of the products for the authenticated user.
